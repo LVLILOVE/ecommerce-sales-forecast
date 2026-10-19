@@ -39,3 +39,9 @@ outputs/*-shots/
 # 与上一条同源约定：证据截图与机器生成的原始数据不属交付物；
 # 审查报告正文（outputs/前端代码审查报告_V1.0.md）与探针脚本（scripts/_*.mjs）仍入库。
 outputs/review-probe/
+
+# ===== 对外发布的部署暂存目录（含生产密钥与产物，不入库） =====
+deploy/
+
+# ===== 平台发布元数据（含 localDir 绝对路径与 appId，纯本机产物，不入库） =====
+.wbapp_*.genie

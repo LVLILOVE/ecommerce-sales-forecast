@@ -22,6 +22,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.health import router as health_router
@@ -178,3 +179,64 @@ register_exception_handlers(app)
 # 路由挂载：health 挂根路径；业务路由统一在 /api/v1 下
 app.include_router(health_router)
 app.include_router(api_router, prefix="/api/v1")
+
+
+# =============================================================================
+# 单端口托管前端（`SERVE_FRONTEND=1` 时启用）
+# -----------------------------------------------------------------------------
+# 用途：把「前端静态产物 + 后端 API」放到**同一个端口**上，适用于没有
+#   Nginx 的场景（如平台托管、快速发布）。前端与 API 同源 ⇒ 不需要代理，
+#   也不需要为部署再配一次 CORS。
+#
+# ⚠️ 默认 **关闭**：既有的《部署运维手册》形态是 Nginx 托管静态 + 反向代理
+#    `/api`，此时后端应当只监听 API。默认关闭也能保证**现有 verify_* 校验
+#    脚本的行为完全不变**（它们跑在 APP_ENV=development 下）。
+#
+# ⚠️ 必须挂在**所有路由注册之后**：Starlette 按注册顺序匹配，这条 catch-all
+#    放在最后才不会抢走 `/api/v1/*`、`/health`、`/docs`。
+# =============================================================================
+_FRONTEND_DIR = Path(config.settings.frontend_dir)
+_FRONTEND_INDEX = _FRONTEND_DIR / "index.html"
+_FRONTEND_ASSETS = _FRONTEND_DIR / "assets"
+_FRONTEND_READY = (
+    config.settings.serve_frontend
+    and _FRONTEND_INDEX.is_file()
+    and _FRONTEND_ASSETS.is_dir()
+)
+
+if config.settings.serve_frontend and not _FRONTEND_READY:
+    # 显式告警而不是静默跳过：配了 `SERVE_FRONTEND=1` 却看不到页面时，
+    # 十有八九是产物没构建或 `FRONTEND_DIR` 指错 —— 日志里要能直接看出来。
+    logger.warning(
+        "SERVE_FRONTEND 已开启但前端产物不完整，已跳过静态托管。"
+        "期望 index.html 与 assets/ 位于 %s",
+        _FRONTEND_DIR,
+    )
+
+if _FRONTEND_READY:
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_FRONTEND_ASSETS)),
+        name="frontend-assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:  # pragma: no cover
+        """SPA 兜底：未命中任何已注册路由的 GET 一律回 `index.html`。
+
+        前端用的是 `BrowserRouter`（history 路由），刷新 `/result/12` 这类
+        子路由时浏览器会直接向服务端请求该路径 —— 没有这条兜底就是 404。
+
+        🔒 **`Cache-Control: no-store` 不可省**（2026-10-19 线上故障）：
+        `index.html` 引用的是**带 hash 的构建产物**（`assets/index-<hash>.js`）。
+        每次重新发布会换掉 hash，旧的 JS 文件随即消失。若浏览器缓了旧
+        `index.html`，它仍会去请求**已不存在的旧 hash** → 404 → 页面白屏，
+        用户看到的就是「打不开」。缓存 HTML 没有任何收益（它只有 437 B），
+        所以直接禁用缓存；带 hash 的 `/assets/*` 仍可长缓存。
+        """
+        return FileResponse(
+            _FRONTEND_INDEX,
+            headers={"Cache-Control": "no-store, must-revalidate"},
+        )
+
+    logger.info("已启用单端口托管前端：%s", _FRONTEND_DIR)

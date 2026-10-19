@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>前端入口 · 电商销量预测系统</title>
+<style>
+  :root{
+    --brand-h:205;
+    --primary:oklch(0.475 0.145 var(--brand-h));
+    --primary-soft:oklch(0.475 0.145 var(--brand-h) / .12);
+    --success:oklch(0.51 0.15 155); --success-soft:oklch(0.51 0.15 155 / .14);
+    --warning:oklch(0.54 0.155 75); --warning-soft:oklch(0.54 0.155 75 / .15);
+    --danger:oklch(0.555 0.20 25);
+    --info:oklch(0.53 0.13 250);
+    --bg:oklch(0.985 0.002 250); --bg-subtle:oklch(0.965 0.004 250);
+    --surface:oklch(1 0 0); --surface-2:oklch(0.975 0.003 250);
+    --border:oklch(0.905 0.006 250); --border-strong:oklch(0.85 0.008 250);
+    --text:oklch(0.22 0.012 250); --text-2:oklch(0.45 0.012 250); --text-3:oklch(0.535 0.012 250);
+    --radius:0.625rem; --radius-sm:0.375rem; --radius-lg:0.875rem;
+    --shadow-sm:0 1px 2px oklch(0.2 0.02 250 / .06);
+    --shadow:0 1px 3px oklch(0.2 0.02 250 / .08), 0 6px 16px oklch(0.2 0.02 250 / .06);
+    --font-sans:'Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:oklch(0.175 0.012 250); --bg-subtle:oklch(0.205 0.014 250);
+      --surface:oklch(0.225 0.014 250); --surface-2:oklch(0.255 0.014 250);
+      --border:oklch(0.315 0.014 250); --border-strong:oklch(0.395 0.016 250);
+      --text:oklch(0.955 0.004 250); --text-2:oklch(0.76 0.012 250); --text-3:oklch(0.63 0.012 250);
+      --primary:oklch(0.72 0.15 var(--brand-h)); --primary-soft:oklch(0.72 0.15 var(--brand-h) / .10);
+      --success:oklch(0.68 0.145 155); --success-soft:oklch(0.68 0.145 155 / .14);
+      --warning:oklch(0.66 0.155 75); --warning-soft:oklch(0.66 0.155 75 / .15);
+      --danger:oklch(0.64 0.19 25); --info:oklch(0.68 0.13 250);
+    }
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font-sans);background:var(--bg);color:var(--text);line-height:1.65;font-size:15px;padding-bottom:48px}
+  code,pre,.mono{font-family:var(--font-mono)}
+  a{color:var(--primary);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  header{position:sticky;top:0;z-index:9;display:flex;align-items:center;gap:20px;
+    padding:0 24px;height:56px;background:var(--surface);border-bottom:1px solid var(--border)}
+  .brand{font-weight:700;letter-spacing:-.01em}
+  header nav{margin-left:auto;display:flex;gap:6px}
+  header nav a{padding:6px 12px;border-radius:var(--radius-sm);font-size:14px;color:var(--text-2)}
+  header nav a:hover{background:var(--surface-2);text-decoration:none}
+  header nav a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+
+  main{max-width:1000px;margin:0 auto;padding:32px 24px 0}
+  h1{font-size:26px;letter-spacing:-.02em;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .lede{margin-top:8px;color:var(--text-2);max-width:70ch}
+  .pill{font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary)}
+  .pill.gray{background:var(--surface-2);color:var(--text-3)}
+
+  section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:20px;margin-top:20px;box-shadow:var(--shadow-sm)}
+  section h2{font-size:17px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  h2 .n{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary);font-size:12px;font-weight:700}
+  p{color:var(--text-2)}
+  p+p{margin-top:8px}
+
+  .btn{display:inline-flex;align-items:center;gap:8px;margin:6px 0 4px;
+    background:var(--primary);color:#fff;font-weight:600;font-size:14px;
+    padding:10px 16px;border-radius:var(--radius-sm);box-shadow:var(--shadow-sm)}
+  .btn:hover{text-decoration:none;opacity:.92}
+  .btn.ghost{background:var(--surface-2);color:var(--text);border:1px solid var(--border-strong);font-weight:500}
+  .btnrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+
+  pre{background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:12px 14px;overflow:auto;font-size:12.5px;line-height:1.75;color:var(--text)}
+  pre .c{color:var(--text-3)}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-size:12.5px;color:var(--text-3);font-weight:600;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:0}
+  td.mono,th.mono{font-family:var(--font-mono);font-size:12.5px}
+  .route{font-family:var(--font-mono);color:var(--text);font-weight:600}
+  .req{font-size:11.5px;color:var(--text-3);white-space:nowrap}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 7px;border-radius:999px;
+    background:var(--surface-2);color:var(--text-2);margin-right:4px}
+  .tag.ok{background:var(--success-soft);color:var(--success)}
+  .tag.warn{background:var(--warning-soft);color:var(--warning)}
+  .tag.no{background:var(--surface-2);color:var(--text-3)}
+
+  .callout{border-left:3px solid var(--primary);background:var(--primary-soft);
+    border-radius:var(--radius-sm);padding:12px 14px;margin-top:12px;font-size:13.5px;color:var(--text-2)}
+  .callout.warn{border-left-color:var(--warning);background:var(--warning-soft)}
+  .callout b{color:var(--text)}
+  .scroll{overflow-x:auto}
+
+  /* ---- 服务状态检测卡 ---- */
+  .btn.sm{padding:6px 12px;font-size:13px}
+  .svc{margin-top:16px;border:1px solid var(--border);border-left:3px solid var(--text-3);
+    border-radius:var(--radius);background:var(--surface);padding:14px 16px;box-shadow:var(--shadow-sm)}
+  .svc.ok{border-left-color:var(--success)}
+  .svc.warn{border-left-color:var(--warning)}
+  .svc.bad{border-left-color:var(--danger)}
+  .svc-row{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:3px 0}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--text-3);flex:0 0 auto}
+  .dot.up{background:var(--success);box-shadow:0 0 0 3px var(--success-soft)}
+  .dot.down{background:var(--danger);box-shadow:0 0 0 3px oklch(0.555 0.20 25 / .14)}
+  .svc-name{font-family:var(--font-mono);color:var(--text)}
+  .svc-state{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--text-3)}
+  .svc-state.up{color:var(--success)}
+  .svc-state.down{color:var(--danger)}
+  .svc-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+  .svc-summary{font-size:13px;color:var(--text-2)}
+  .guide{display:none;margin-top:12px;border-top:1px dashed var(--border);padding-top:12px}
+  .guide.show{display:block}
+  .guide h3{font-size:13.5px;margin-bottom:6px;color:var(--text)}
+
+  footer{max-width:1000px;margin:28px auto 0;padding:0 24px;font-size:12.5px;color:var(--text-3)}
+  footer a{color:var(--text-3)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">电商销量预测系统</div>
+  <nav>
+    <a class="on" href="前端.html">前端入口</a>
+    <a href="后端.html">后端入口</a>
+    <a href="产品原型.html">产品原型</a>
+  </nav>
+</header>
+
+<main>
+  <h1>前端入口 <span class="pill">React 18 · TypeScript · Vite 5</span></h1>
+  <p class="lede">
+    这是产品的<strong>用户界面</strong>（前台 11 页 + 管理端 2 页）。
+    它<strong>不直连</strong>后端地址：所有请求都以同源 <code>/api/…</code> 发出，
+    由 Vite 开发服务器代理转发到后端（<code>127.0.0.1:8000</code>）。
+    因此 <strong>前端必须与后端同时运行</strong>，否则页面能打开但没有任何数据。
+  </p>
+
+  <div id="svc" class="svc" aria-live="polite">
+    <div class="svc-row">
+      <span class="dot" data-svc="frontend"></span>
+      <span class="svc-name">前端服务 · localhost:5173</span>
+      <span class="svc-state" data-state="frontend">检测中…</span>
+    </div>
+    <div class="svc-row">
+      <span class="dot" data-svc="backend"></span>
+      <span class="svc-name">后端服务 · 127.0.0.1:8000</span>
+      <span class="svc-state" data-state="backend">检测中…</span>
+    </div>
+    <div class="svc-actions">
+      <button class="btn ghost sm" id="svc-recheck" type="button">重新检测</button>
+      <span class="svc-summary" id="svc-summary">正在检测服务状态…</span>
+    </div>
+    <div class="guide" id="svc-guide">
+      <h3>启动命令（在项目根目录各开一个终端）</h3>
+<pre><span class="c"># 前端（端口 5173）</span>
+cd web
+npm run dev
+
+<span class="c"># 后端（端口 8000）</span>
+C:\ProgramData\anaconda3\envs\deploy\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000</pre>
+      <p style="font-size:12.5px;margin-top:8px;color:var(--text-3)">
+        本卡片由浏览器直接探测端口得出（与页面同源策略无关）；服务启动后点「重新检测」即可刷新。
+        端口被残留进程占用时：<code>netstat -ano | findstr ":5173 "</code> 取到 PID，再 <code>taskkill /PID &lt;PID&gt; /T /F</code>。
+      </p>
+    </div>
+  </div>
+
+  <section>
+    <h2><span class="n">1</span>打开前端应用（主入口 · 需服务已启动）</h2>
+    <div class="btnrow">
+      <a class="btn" href="http://localhost:5173/" target="_blank" rel="noopener">http://localhost:5173/</a>
+      <span class="pill gray">Vite 开发服务器</span>
+    </div>
+    <div class="callout">
+      <b>可直达的页面（地址即真源）</b><br>
+      <code>/#/</code> 产品首页 · <code>/dashboard</code> 工作台 · <code>/upload</code> 上传数据 ·
+      <code>/params?datasetId=1</code> 确认参数 · <code>/running/1</code> 执行进度 ·
+      <code>/result/1</code> 预测结果 · <code>/history</code> 历史任务 ·
+      <code>/compare</code> 跨任务对比
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>本地兜底入口（双击即看，<em>无需</em>启动任何服务）</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>入口</th><th>文件</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="产品原型.html">产品原型入口（13 页索引）</a></td>
+            <td class="mono">产品原型.html</td>
+            <td><span class="tag ok">可用</span>根目录的<strong>原型总览页</strong>：13 个页面索引、
+                各自对应的<strong>真实路由</strong>，以及与真实前端的差异（含管理端缺口）。</td>
+          </tr>
+          <tr>
+            <td><a href="prototype/index.html">原型首页（直达）</a></td>
+            <td class="mono">prototype/index.html</td>
+            <td><span class="tag ok">可用</span>资源为相对路径，双击即可浏览全部界面。
+                原型是本项目视觉与文案的基准（<code>UX-P01</code> ~ <code>UX-P11</code>）。</td>
+          </tr>
+          <tr>
+            <td><a href="web/dist/index.html">前端构建产物</a></td>
+            <td class="mono">web/dist/index.html</td>
+            <td><span class="tag warn">需静态服务器</span>该文件用<strong>绝对路径</strong>
+                <code>/assets/…</code> 引用资源，直接双击（<code>file://</code>）会白屏。
+                请通过 <code>http://localhost:5173/</code> 访问，或另起静态服务器打开。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>启动前端</h2>
+    <p>在项目根目录打开一个终端，执行（<strong>另一个终端留给后端</strong>）：</p>
+<pre><span class="c"># 方式一：走 npm 脚本</span>
+cd web
+npm run dev
+
+<span class="c"># 方式二：直接跑 Vite（不依赖 npm，等价）</span>
+cd web
+node node_modules/vite/bin/vite.js --port 5173
+
+<span class="c"># 端口被占用时（常见：上一次的 dev server 没关干净）</span>
+<span class="c">#   netstat -ano | findstr "LISTENING" | findstr ":5173 "   → 拿到 PID</span>
+<span class="c">#   taskkill /PID &lt;PID&gt; /T /F</span></pre>
+    <div class="callout warn">
+      <b>排错：页面能打开，但布局全乱 / 所有数据都是空的？</b><br>
+      这是 dev server 处于<strong>降级状态</strong>（配置被批量改写后自动重启只成功了一半）——
+      接口代理与 Tailwind 编译都没生效，而且<strong>控制台不会有任何报错</strong>。
+      <b>处理：关掉旧进程，重新启动前端</b>。自检：F12 → Network，
+      <code>/api/…</code> 的响应类型应为 <code>application/json</code>（若是 <code>text/html</code> 即为此故障）。
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>前后端接入约定</h2>
+    <table>
+      <tbody>
+        <tr><th style="width:34%">接口基址</th>
+            <td><code>/api/v1</code>（<code>VITE_API_BASE</code>，见 <code>web/.env</code>）—— 相对路径，浏览器只看到同源</td></tr>
+        <tr><th>代理规则</th>
+            <td><code>/api</code> 与 <code>/health</code> → <code>http://127.0.0.1:8000</code>，配置在 <code>web/vite.config.ts</code></td></tr>
+        <tr><th>鉴权</th>
+            <td><code>Authorization: Bearer &lt;token&gt;</code>；Token 存 <code>localStorage</code>，401 时统一清空并跳登录</td></tr>
+        <tr><th>响应信封</th>
+            <td><code>{ code, message, data }</code>；<code>code === 0</code> 为成功</td></tr>
+        <tr><th>业务失败</th>
+            <td><strong>HTTP 200 + <code>body.code</code></strong>（仅 401 类返回真实 401）——
+                这是本项目最易误判的口径，详见「后端入口」</td></tr>
+        <tr><th>游客链路</th>
+            <td>上传 → 参数 → 执行 → 结果<strong>无需登录</strong>（数据归属 <code>user_id = 0</code>）；
+                导出与历史记录才要求登录</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="n">5</span>前端页面 ↔ 后端接口 对应关系</h2>
+    <p>下表为<strong>逐页实际调用</strong>的接口（依据 <code>web/src/api/client.ts</code> 与生成的 OpenAPI 契约）。
+       共 13 个页面、32 个接口操作。</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>前端页面</th><th class="mono">路由</th><th class="mono">需求</th><th>调用的后端接口</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>产品首页</td><td class="route">/</td><td class="req">UX-P01</td>
+              <td><span class="tag no">不调接口</span>实测指标取自构建期快照（<code>generated/metrics</code>）</td></tr>
+          <tr><td>登录</td><td class="route">/login</td><td class="req">UX-P02</td>
+              <td class="mono">POST /api/v1/auth/login<br>GET /api/v1/users/me</td></tr>
+          <tr><td>注册</td><td class="route">/register</td><td class="req">UX-P03</td>
+              <td class="mono">POST /api/v1/auth/register<br>→ 自动 <b>POST /api/v1/auth/login</b></td></tr>
+          <tr><td>工作台</td><td class="route">/dashboard</td><td class="req">UX-P04</td>
+              <td class="mono">GET /api/v1/history/dashboard</td></tr>
+          <tr><td>上传数据</td><td class="route">/upload</td><td class="req">UX-P05</td>
+              <td class="mono">POST /api/v1/datasets<br>GET /api/v1/datasets/sample<br>GET /api/v1/datasets/template<br>
+                  GET /api/v1/datasets/{id}/preview<br>GET /api/v1/datasets/{id}/errors<br>POST /api/v1/datasets/gap</td></tr>
+          <tr><td>确认参数</td><td class="route">/params</td><td class="req">UX-P06</td>
+              <td class="mono">GET /api/v1/datasets/{id}<br>GET /health<br>POST /api/v1/predictions</td></tr>
+          <tr><td>执行进度</td><td class="route">/running/:taskId</td><td class="req">UX-P07</td>
+              <td class="mono">GET /api/v1/predictions/{id}/status<br>GET /api/v1/datasets/{id}<br>GET /health</td></tr>
+          <tr><td>预测结果</td><td class="route">/result/:taskId</td><td class="req">UX-P08</td>
+              <td class="mono">GET /api/v1/predictions/{id}<br>GET /api/v1/predictions/{id}/detail<br>GET /api/v1/predictions/{id}/export</td></tr>
+          <tr><td>历史任务</td><td class="route">/history</td><td class="req">UX-P09</td>
+              <td class="mono">GET /api/v1/history<br>DELETE /api/v1/history/{id}</td></tr>
+          <tr><td>历史详情</td><td class="route">/history/:taskId</td><td class="req">UX-P10</td>
+              <td class="mono">GET /api/v1/history/{id}<br>POST /api/v1/predictions（同参重跑）</td></tr>
+          <tr><td>跨任务对比</td><td class="route">/compare</td><td class="req">UX-P11</td>
+              <td class="mono">GET /api/v1/history<br>POST /api/v1/history/compare</td></tr>
+          <tr><td>管理 · 运营看板</td><td class="route">/admin</td><td class="req">AD-P01</td>
+              <td class="mono">GET /api/v1/admin/overview<br>GET /api/v1/admin/models<br>PATCH /api/v1/admin/models/{version}</td></tr>
+          <tr><td>管理 · 用户与任务</td><td class="route">/admin/manage</td><td class="req">AD-P02</td>
+              <td class="mono">GET /api/v1/admin/users<br>PATCH /api/v1/admin/users/{id}<br>
+                  POST /api/v1/admin/users/{id}/reset-password<br>GET /api/v1/admin/tasks<br>
+                  DELETE /api/v1/admin/tasks/{id}<br>GET /api/v1/admin/logs</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <span class="tag warn">注意</span>
+      <code>GET /health</code> 挂在<strong>根路径</strong>，<em>不在</em> <code>/api/v1</code> 下。
+      前端由 <code>systemApi.health()</code> 剥掉路径前缀后请求，Vite 也单独代理了 <code>/health</code>。
+    </div>
+  </section>
+
+  <footer>
+    权威接口定义见 <code>outputs/电商销量预测系统_openapi.json</code> 与
+    <a href="后端.html">后端入口</a> 页列出的在线文档。
+  </footer>
+</main>
+
+<script>
+/* 服务状态检测
+   ---------------------------------------------------------------------------
+   用 `fetch(url, {mode:'no-cors'})` 探测：服务在 → resolve；端口没人听 → reject。
+   这是从 file:// 页面（origin 为 null）判活的唯一可行方式 ——
+   普通 fetch 会因跨源被拦，而 img 探针对返回 text/html 的服务无法区分（同样 onerror）。
+   实测（Edge 155，file:// 打开本页）：服务在 resolve / 死端口 reject ✅ */
+(function () {
+  var SVC = [
+    { k: 'frontend', url: 'http://localhost:5173/' },
+    { k: 'backend', url: 'http://127.0.0.1:8000/health' }
+  ];
+
+  function probe(url, ms) {
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var timer = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, ms);
+    return fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function () { clearTimeout(timer); return true; })
+      .catch(function () { clearTimeout(timer); return false; });
+  }
+
+  function paint(k, up) {
+    var dot = document.querySelector('.dot[data-svc="' + k + '"]');
+    var st = document.querySelector('.svc-state[data-state="' + k + '"]');
+    if (dot) dot.className = 'dot ' + (up ? 'up' : 'down');
+    if (st) { st.className = 'svc-state ' + (up ? 'up' : 'down'); st.textContent = up ? '运行中' : '未启动'; }
+  }
+
+  function reset(k) {
+    var dot = document.querySelector('.dot[data-svc="' + k + '"]');
+    var st = document.querySelector('.svc-state[data-state="' + k + '"]');
+    if (dot) dot.className = 'dot';
+    if (st) { st.className = 'svc-state'; st.textContent = '检测中…'; }
+  }
+
+  function run() {
+    var box = document.getElementById('svc');
+    var sum = document.getElementById('svc-summary');
+    var guide = document.getElementById('svc-guide');
+    SVC.forEach(function (s) { reset(s.k); });
+    if (box) box.className = 'svc';
+    if (sum) sum.textContent = '正在检测服务状态…';
+    if (guide) guide.className = 'guide';
+
+    Promise.all(SVC.map(function (s) {
+      return probe(s.url, 2500).then(function (up) { paint(s.k, up); return up; });
+    })).then(function (res) {
+      var fe = res[0], be = res[1], cls, text;
+      if (fe && be) { cls = 'svc ok'; text = '前后端均已就绪 —— 可以正常使用。'; }
+      else if (!fe) { cls = 'svc bad'; text = '前端服务未启动 —— 主入口暂时打不开，请先按下方命令启动。'; }
+      else { cls = 'svc warn'; text = '后端服务未启动 —— 前端页面能打开，但所有数据都会是空的。'; }
+      if (box) box.className = cls;
+      if (sum) sum.textContent = text;
+      if (guide && !(fe && be)) guide.className = 'guide show';
+    });
+  }
+
+  var btn = document.getElementById('svc-recheck');
+  if (btn) btn.addEventListener('click', run);
+  run();
+})();
+</script>
+</body>
+</html>

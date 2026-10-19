@@ -64,6 +64,18 @@ def _get_int(key: str, default: int) -> int:
         return default
 
 
+def _get_bool(key: str, default: bool) -> bool:
+    """读取布尔环境变量。
+
+    `1/true/yes/on`（不分大小写）为真；空串或未设置回落到 `default`。
+    刻意**不**把任意非空串当假 —— 「拼错的值静默变成 false」比直接报错更难查。
+    """
+    raw = _get(key, "")
+    if raw == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _resolve(base: Path, value: str) -> Path:
     """把相对路径解析为基于 BASE_DIR 的绝对路径；已是绝对路径则原样返回。"""
     p = Path(value)
@@ -99,6 +111,10 @@ class Settings:
     demo_csv: Path
     cors_origins: tuple[str, ...]
     torch_device: str
+    # ---- 对外发布相关（2026-10-15 新增，见《对外发布与多用户访问方案 V1.0》）----
+    allow_guest: bool
+    serve_frontend: bool
+    frontend_dir: Path
 
     @classmethod
     def from_env(cls, base_dir: Path = BASE_DIR) -> "Settings":
@@ -134,6 +150,14 @@ class Settings:
                 if o.strip()
             ),
             torch_device=_get("TORCH_DEVICE", "auto"),
+            # 🔒 默认 `true`：保持 `FR-USR-08` 的「免登录试跑」链路与既有校验脚本不变。
+            #    公开部署置 `false` ⇒ 整条游客链改为要求登录（见 `deps._guest_fallback`）。
+            allow_guest=_get_bool("ALLOW_GUEST", True),
+            # 单端口形态：由 FastAPI 直接托管前端产物（Nginx 部署时保持 false）
+            serve_frontend=_get_bool("SERVE_FRONTEND", False),
+            # ⚠️ 独立配置项而非硬编码 `web/dist`：部署时产物可能被放在别处，
+            #    且部分部署通道会把名为 `dist` 的目录当作构建产物排除。
+            frontend_dir=_resolve(base_dir, _get("FRONTEND_DIR", "web/dist")),
         )
 
     def ensure_secret_configured(self) -> None:

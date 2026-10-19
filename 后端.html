@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>后端入口 · 电商销量预测系统</title>
+<style>
+  :root{
+    --brand-h:205;
+    --primary:oklch(0.475 0.145 var(--brand-h));
+    --primary-soft:oklch(0.475 0.145 var(--brand-h) / .12);
+    --success:oklch(0.51 0.15 155); --success-soft:oklch(0.51 0.15 155 / .14);
+    --warning:oklch(0.54 0.155 75); --warning-soft:oklch(0.54 0.155 75 / .15);
+    --danger:oklch(0.555 0.20 25); --danger-soft:oklch(0.555 0.20 25 / .14);
+    --info:oklch(0.53 0.13 250);
+    --bg:oklch(0.985 0.002 250); --bg-subtle:oklch(0.965 0.004 250);
+    --surface:oklch(1 0 0); --surface-2:oklch(0.975 0.003 250);
+    --border:oklch(0.905 0.006 250); --border-strong:oklch(0.85 0.008 250);
+    --text:oklch(0.22 0.012 250); --text-2:oklch(0.45 0.012 250); --text-3:oklch(0.535 0.012 250);
+    --radius:0.625rem; --radius-sm:0.375rem; --radius-lg:0.875rem;
+    --shadow-sm:0 1px 2px oklch(0.2 0.02 250 / .06);
+    --shadow:0 1px 3px oklch(0.2 0.02 250 / .08), 0 6px 16px oklch(0.2 0.02 250 / .06);
+    --font-sans:'Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:oklch(0.175 0.012 250); --bg-subtle:oklch(0.205 0.014 250);
+      --surface:oklch(0.225 0.014 250); --surface-2:oklch(0.255 0.014 250);
+      --border:oklch(0.315 0.014 250); --border-strong:oklch(0.395 0.016 250);
+      --text:oklch(0.955 0.004 250); --text-2:oklch(0.76 0.012 250); --text-3:oklch(0.63 0.012 250);
+      --primary:oklch(0.72 0.15 var(--brand-h)); --primary-soft:oklch(0.72 0.15 var(--brand-h) / .10);
+      --success:oklch(0.68 0.145 155); --success-soft:oklch(0.68 0.145 155 / .14);
+      --warning:oklch(0.66 0.155 75); --warning-soft:oklch(0.66 0.155 75 / .15);
+      --danger:oklch(0.64 0.19 25); --danger-soft:oklch(0.64 0.19 25 / .14);
+      --info:oklch(0.68 0.13 250);
+    }
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font-sans);background:var(--bg);color:var(--text);line-height:1.65;font-size:15px;padding-bottom:48px}
+  code,pre,.mono{font-family:var(--font-mono)}
+  a{color:var(--primary);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  header{position:sticky;top:0;z-index:9;display:flex;align-items:center;gap:20px;
+    padding:0 24px;height:56px;background:var(--surface);border-bottom:1px solid var(--border)}
+  .brand{font-weight:700;letter-spacing:-.01em}
+  header nav{margin-left:auto;display:flex;gap:6px}
+  header nav a{padding:6px 12px;border-radius:var(--radius-sm);font-size:14px;color:var(--text-2)}
+  header nav a:hover{background:var(--surface-2);text-decoration:none}
+  header nav a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+
+  main{max-width:1000px;margin:0 auto;padding:32px 24px 0}
+  h1{font-size:26px;letter-spacing:-.02em;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .lede{margin-top:8px;color:var(--text-2);max-width:70ch}
+  .pill{font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary)}
+  .pill.gray{background:var(--surface-2);color:var(--text-3)}
+
+  section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:20px;margin-top:20px;box-shadow:var(--shadow-sm)}
+  section h2{font-size:17px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  h2 .n{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary);font-size:12px;font-weight:700}
+  p{color:var(--text-2)}
+  p+p{margin-top:8px}
+  h3{font-size:14px;margin:16px 0 4px;color:var(--text)}
+  h3:first-of-type{margin-top:4px}
+
+  .btn{display:inline-flex;align-items:center;gap:8px;margin:6px 0 4px;
+    background:var(--primary);color:#fff;font-weight:600;font-size:14px;
+    padding:10px 16px;border-radius:var(--radius-sm);box-shadow:var(--shadow-sm)}
+  .btn:hover{text-decoration:none;opacity:.92}
+  .btn.ghost{background:var(--surface-2);color:var(--text);border:1px solid var(--border-strong);font-weight:500}
+  .btnrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+
+  pre{background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:12px 14px;overflow:auto;font-size:12.5px;line-height:1.75;color:var(--text)}
+  pre .c{color:var(--text-3)}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-size:12.5px;color:var(--text-3);font-weight:600;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:0}
+  td.mono,th.mono{font-family:var(--font-mono);font-size:12.5px}
+  .m{font-family:var(--font-mono);font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;
+    background:var(--surface-2);color:var(--text-2);margin-right:6px}
+  .m.get{background:var(--info-soft, var(--surface-2));color:var(--info)}
+  .m.post{background:var(--success-soft);color:var(--success)}
+  .m.patch{background:var(--warning-soft);color:var(--warning)}
+  .m.delete{background:var(--danger-soft);color:var(--danger)}
+  .path{font-family:var(--font-mono);font-size:12.5px;color:var(--text)}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 7px;border-radius:999px;
+    background:var(--surface-2);color:var(--text-2);margin-right:4px}
+  .tag.ok{background:var(--success-soft);color:var(--success)}
+  .tag.warn{background:var(--warning-soft);color:var(--warning)}
+  .tag.no{background:var(--surface-2);color:var(--text-3)}
+
+  .callout{border-left:3px solid var(--primary);background:var(--primary-soft);
+    border-radius:var(--radius-sm);padding:12px 14px;margin-top:12px;font-size:13.5px;color:var(--text-2)}
+  .callout.warn{border-left-color:var(--warning);background:var(--warning-soft)}
+  .callout.danger{border-left-color:var(--danger);background:var(--danger-soft)}
+  .callout b{color:var(--text)}
+  .scroll{overflow-x:auto}
+
+  /* ---- 服务状态检测卡 ---- */
+  .btn.sm{padding:6px 12px;font-size:13px}
+  .svc{margin-top:16px;border:1px solid var(--border);border-left:3px solid var(--text-3);
+    border-radius:var(--radius);background:var(--surface);padding:14px 16px;box-shadow:var(--shadow-sm)}
+  .svc.ok{border-left-color:var(--success)}
+  .svc.warn{border-left-color:var(--warning)}
+  .svc.bad{border-left-color:var(--danger)}
+  .svc-row{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:3px 0}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--text-3);flex:0 0 auto}
+  .dot.up{background:var(--success);box-shadow:0 0 0 3px var(--success-soft)}
+  .dot.down{background:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
+  .svc-name{font-family:var(--font-mono);color:var(--text)}
+  .svc-state{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--text-3)}
+  .svc-state.up{color:var(--success)}
+  .svc-state.down{color:var(--danger)}
+  .svc-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+  .svc-summary{font-size:13px;color:var(--text-2)}
+  .guide{display:none;margin-top:12px;border-top:1px dashed var(--border);padding-top:12px}
+  .guide.show{display:block}
+  .guide h3{font-size:13.5px;margin:0 0 6px;color:var(--text)}
+
+  footer{max-width:1000px;margin:28px auto 0;padding:0 24px;font-size:12.5px;color:var(--text-3)}
+  footer a{color:var(--text-3)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">电商销量预测系统</div>
+  <nav>
+    <a href="前端.html">前端入口</a>
+    <a class="on" href="后端.html">后端入口</a>
+    <a href="产品原型.html">产品原型</a>
+  </nav>
+</header>
+
+<main>
+  <h1>后端入口 <span class="pill">FastAPI · uvicorn · SQLite</span></h1>
+  <p class="lede">
+    这是产品的<strong>服务端</strong>：30 条路径 / 32 个接口操作，负责数据校验、
+    LSTM 多步预测、指标计算、历史记录与管理端。
+    前端所有数据都来自这里 —— <strong>不启动后端，前端页面就是空的</strong>。
+  </p>
+
+  <div id="svc" class="svc" aria-live="polite">
+    <div class="svc-row">
+      <span class="dot" data-svc="backend"></span>
+      <span class="svc-name">后端服务 · 127.0.0.1:8000</span>
+      <span class="svc-state" data-state="backend">检测中…</span>
+    </div>
+    <div class="svc-row">
+      <span class="dot" data-svc="frontend"></span>
+      <span class="svc-name">前端服务 · localhost:5173</span>
+      <span class="svc-state" data-state="frontend">检测中…</span>
+    </div>
+    <div class="svc-actions">
+      <button class="btn ghost sm" id="svc-recheck" type="button">重新检测</button>
+      <span class="svc-summary" id="svc-summary">正在检测服务状态…</span>
+    </div>
+    <div class="guide" id="svc-guide">
+      <h3>启动命令（在项目根目录各开一个终端）</h3>
+<pre><span class="c"># 后端（端口 8000）</span>
+C:\ProgramData\anaconda3\envs\deploy\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+<span class="c"># 前端（端口 5173）</span>
+cd web
+npm run dev</pre>
+      <p style="font-size:12.5px;margin-top:8px;color:var(--text-3)">
+        本卡片由浏览器直接探测端口得出（与页面同源策略无关）；服务启动后点「重新检测」即可刷新。
+        端口被残留进程占用时：<code>netstat -ano | findstr ":8000 "</code> 取到 PID，再 <code>taskkill /PID &lt;PID&gt; /T /F</code>。
+      </p>
+    </div>
+  </div>
+
+  <section>
+    <h2><span class="n">1</span>在线接口文档（主入口 · 需服务已启动）</h2>
+    <div class="btnrow">
+      <a class="btn" href="http://127.0.0.1:8000/docs" target="_blank" rel="noopener">Swagger UI · /docs</a>
+      <a class="btn ghost" href="http://127.0.0.1:8000/redoc" target="_blank" rel="noopener">ReDoc · /redoc</a>
+      <a class="btn ghost" href="http://127.0.0.1:8000/openapi.json" target="_blank" rel="noopener">OpenAPI JSON</a>
+      <a class="btn ghost" href="http://127.0.0.1:8000/health" target="_blank" rel="noopener">健康检查 /health</a>
+    </div>
+    <div class="callout warn">
+      <span class="tag warn">口径</span>
+      <code>GET /health</code> 挂在<strong>根路径</strong>（<code>http://127.0.0.1:8000/health</code>），
+      <em>不在</em> <code>/api/v1</code> 下 —— 写成 <code>/api/v1/health</code> 会得到 404。
+      它返回数据库状态、模型是否已加载、当前启用版本与推理设备。
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>本地兜底入口（双击即看，<em>无需</em>启动服务）</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>入口</th><th>文件</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><a href="outputs/电商销量预测系统_API接口文档_V1.0.html">接口文档（单文件自包含）</a></td>
+            <td class="mono">outputs/电商销量预测系统_API接口文档_V1.0.html</td>
+            <td><span class="tag ok">可用</span>零外部依赖（1.8 MB 内联），双击即可离线查阅全部接口、报文字段与示例。</td>
+          </tr>
+          <tr>
+            <td><a href="outputs/电商销量预测系统_openapi.json">OpenAPI 契约（JSON）</a></td>
+            <td class="mono">outputs/电商销量预测系统_openapi.json</td>
+            <td><span class="tag ok">可用</span>机器可读的权威定义：30 路径 / 32 操作 / 响应 Schema。
+                可导入 Postman、Apifox 或任意代码生成器。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>启动后端</h2>
+    <p>在<strong>项目根目录</strong>打开一个终端（<strong>另一个终端留给前端</strong>）：</p>
+<pre><span class="c"># 项目根目录下执行（app.main:app 依赖当前工作目录）</span>
+C:\ProgramData\anaconda3\envs\deploy\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+<span class="c"># 端口被占用时</span>
+<span class="c">#   netstat -ano | findstr "LISTENING" | findstr ":8000 "   → 拿到 PID</span>
+<span class="c">#   taskkill /PID &lt;PID&gt; /T /F</span></pre>
+    <div class="callout">
+      <b>启动后自检</b>：浏览器打开 <code>http://127.0.0.1:8000/health</code>，
+      应返回 <code>{"code":0,…,"status":"ok","model_loaded":true,"device":"cuda"}</code>。
+      若 <code>model_loaded</code> 为 <code>false</code>，预测接口会返回 <code>40404</code>。
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>前端接入约定（对齐前端入口页）</h2>
+    <table>
+      <tbody>
+        <tr><th style="width:30%">统一响应信封</th>
+            <td><code>{ code, message, data }</code>；<code>code === 0</code> 表示成功</td></tr>
+        <tr><th>业务失败的状态码</th>
+            <td><strong>HTTP 200 + <code>body.code</code> ≠ 0</strong>（唯一例外：401 类返回真实 401）。
+                按 RESTful 习惯去断言 <code>400/404</code> 会全部判错</td></tr>
+        <tr><th>鉴权</th>
+            <td><code>Authorization: Bearer &lt;JWT&gt;</code>；JWT 带 <code>ver</code>（对齐 <code>users.token_version</code>）
+                与 <code>jti</code>（登出黑名单）</td></tr>
+        <tr><th>越权判定顺序</th>
+            <td>无 Token → <code>401/40101</code> → Token 失效 → <code>401/40102</code> → 非管理员 → <code>403/40301</code>（顺序不可换）</td></tr>
+        <tr><th>管理端</th>
+            <td><code>/api/v1/admin/*</code> 需 <code>role = admin</code>，是数据隔离的<strong>唯一显式例外</strong>，全操作留审计</td></tr>
+        <tr><th>任务耗时口径</th>
+            <td>端到端不超过 <strong>60 s</strong>；预测为<strong>同步语义</strong>（响应返回时任务已入终态，
+                不存在运行期可轮询的进度窗口）</td></tr>
+      </tbody>
+    </table>
+
+    <h3>错误码区间</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>区间</th><th>含义</th><th>典型值</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">400xx</td><td>请求与数据校验</td>
+              <td class="mono">40001 缺少必需列 · 40005 时间断档 · 40011 密码强度不足 · 40012 参数非法</td></tr>
+          <tr><td class="mono">401xx</td><td>认证</td>
+              <td class="mono">40101 未登录 · 40102 Token 失效 · 40103 邮箱或密码错误 · 40104 限流冷却 · 40105 邮箱已注册</td></tr>
+          <tr><td class="mono">403xx</td><td>权限</td><td class="mono">40301 无权访问他人资源</td></tr>
+          <tr><td class="mono">404xx</td><td>不存在</td>
+              <td class="mono">40401 任务不存在 · 40402 数据集不存在 · 40403 用户不存在 · 40404 无启用模型</td></tr>
+          <tr><td class="mono">500xx</td><td>服务端内部</td>
+              <td class="mono">50001 推理失败 · 50002 文件读写异常 · 50003 数据库异常</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">5</span>接口清单 ↔ 前端调用方（32 个操作）</h2>
+    <p>按 OpenAPI 的 tag 分组；「调用方」列为实际发起该请求的前端页面（<code>UX-Pxx</code> / <code>AD-Pxx</code>）。</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>接口</th><th>用途</th><th>调用方</th></tr></thead>
+        <tbody>
+          <tr><td colspan="3" style="background:var(--surface-2);font-weight:600;font-size:12.5px">
+              auth · 认证（3）</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/auth/register</span></td>
+              <td>注册账号</td><td class="mono">注册页 UX-P03</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/auth/login</span></td>
+              <td>登录，签发 JWT</td><td class="mono">登录页 UX-P02 · 注册页（注册后自动登录）</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/auth/logout</span></td>
+              <td>登出，<code>jti</code> 入黑名单</td><td class="mono">全局顶栏「退出登录」</td></tr>
+
+          <tr><td colspan="3" style="background:var(--surface-2);font-weight:600;font-size:12.5px">
+              users · 用户（2）</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/users/me</span></td>
+              <td>取当前用户（恢复登录态）</td><td class="mono">应用启动引导（全部页面）</td></tr>
+          <tr><td><span class="m patch">PATCH</span><span class="path">/api/v1/users/me</span></td>
+              <td>改昵称 / 改密码</td><td class="mono"><span class="tag no">暂无页面入口</span></td></tr>
+
+          <tr><td colspan="3" style="background:var(--surface-2);font-weight:600;font-size:12.5px">
+              datasets · 数据集（7）</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/datasets</span></td>
+              <td>上传 CSV 并跑 7 项校验</td><td class="mono">上传页 UX-P05</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/datasets/sample</span></td>
+              <td>一键加载示例数据（幂等）</td><td class="mono">上传页 UX-P05 · 工作台快捷入口</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/datasets/template</span></td>
+              <td>下载标准 CSV 模板</td><td class="mono">上传页 UX-P05</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/datasets/{dataset_id}</span></td>
+              <td>数据集详情 + 分级预判 + 耗时预估</td><td class="mono">参数页 UX-P06 · 执行页 UX-P07</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/datasets/{dataset_id}/preview</span></td>
+              <td>数据预览（服务端关键字搜索）</td><td class="mono">上传页 UX-P05</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/datasets/{dataset_id}/errors</span></td>
+              <td>下载校验错误明细</td><td class="mono">上传页 UX-P05（失败卡）</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/datasets/gap</span></td>
+              <td>断档处置（插值 / 放弃，须用户显式选择）</td><td class="mono">上传页 UX-P05</td></tr>
+
+          <tr><td colspan="3" style="background:var(--surface-2);font-weight:600;font-size:12.5px">
+              predictions · 预测任务（5）</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/predictions</span></td>
+              <td>创建并<strong>同步执行</strong>预测任务</td><td class="mono">参数页 UX-P06 · 历史详情（同参重跑）UX-P10</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/predictions/{task_id}/status</span></td>
+              <td>任务状态与预算</td><td class="mono">执行页 UX-P07</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/predictions/{task_id}</span></td>
+              <td>结果：指标 + 覆盖率 + 曲线 + 分布</td><td class="mono">结果页 UX-P08</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/predictions/{task_id}/detail</span></td>
+              <td>预测明细分页（服务端排序/筛选）</td><td class="mono">结果页 UX-P08</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/predictions/{task_id}/export</span></td>
+              <td>导出 CSV / Excel（需登录）</td><td class="mono">结果页 UX-P08</td></tr>
+
+          <tr><td colspan="3" style="background:var(--surface-2);font-weight:600;font-size:12.5px">
+              历史记录 · history（5）</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/history</span></td>
+              <td>历史任务列表（分页/筛选）</td><td class="mono">历史页 UX-P09 · 对比页 UX-P11</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/history/dashboard</span></td>
+              <td>工作台概览统计</td><td class="mono">工作台 UX-P04</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/history/{task_id}</span></td>
+              <td>任务详情（回看当时参数与结果）</td><td class="mono">历史详情 UX-P10</td></tr>
+          <tr><td><span class="m delete">DELETE</span><span class="path">/api/v1/history/{task_id}</span></td>
+              <td><strong>软删除</strong>（仅置 <code>is_deleted</code>，可由管理员查回）</td><td class="mono">历史页 UX-P09</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/history/compare</span></td>
+              <td>跨任务对比（2~4 个任务）</td><td class="mono">对比页 UX-P11</td></tr>
+
+          <tr><td colspan="3" style="background:var(--surface-2);font-weight:600;font-size:12.5px">
+              system · 系统（1）</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/health</span> <span class="tag warn">根路径</span></td>
+              <td>健康检查：库 / 模型 / 设备 / 版本</td><td class="mono">参数页 UX-P06 · 执行页 UX-P07</td></tr>
+
+          <tr><td colspan="3" style="background:var(--surface-2);font-weight:600;font-size:12.5px">
+              管理端 · admin（9）· 需 <code>role = admin</code></td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/admin/overview</span></td>
+              <td>运营看板概览（含 MAPE 走势、埋点）</td><td class="mono">管理看板 AD-P01</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/admin/users</span></td>
+              <td>用户列表</td><td class="mono">管理页 AD-P02</td></tr>
+          <tr><td><span class="m patch">PATCH</span><span class="path">/api/v1/admin/users/{user_id}</span></td>
+              <td>启停用 / 角色变更</td><td class="mono">管理页 AD-P02</td></tr>
+          <tr><td><span class="m post">POST</span><span class="path">/api/v1/admin/users/{user_id}/reset-password</span></td>
+              <td>重置密码（同时 <code>token_version + 1</code>，旧登录态全部失效）</td><td class="mono">管理页 AD-P02</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/admin/tasks</span></td>
+              <td>全量任务列表（<strong>含已软删除</strong>）</td><td class="mono">管理页 AD-P02</td></tr>
+          <tr><td><span class="m delete">DELETE</span><span class="path">/api/v1/admin/tasks/{task_id}</span></td>
+              <td><strong>硬删除</strong>（级联删明细与指标，不可恢复）</td><td class="mono">管理页 AD-P02</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/admin/models</span></td>
+              <td>模型版本列表</td><td class="mono">管理看板 AD-P01</td></tr>
+          <tr><td><span class="m patch">PATCH</span><span class="path">/api/v1/admin/models/{version}</span></td>
+              <td>切换启用版本（返回 <code>warnings</code> 必须展示）</td><td class="mono">管理看板 AD-P01</td></tr>
+          <tr><td><span class="m get">GET</span><span class="path">/api/v1/admin/logs</span></td>
+              <td>操作日志查询</td><td class="mono">管理页 AD-P02</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout danger">
+      <b>两种「删除」语义不同，不要混用</b>：
+      <code>DELETE /history/{id}</code> 是<strong>软删除</strong>（数据仍在库中，管理员可查回）；
+      <code>DELETE /admin/tasks/{id}</code> 是<strong>硬删除</strong>（物理删除，不可恢复）。
+    </div>
+  </section>
+
+  <footer>
+    权威接口定义见 <code>outputs/电商销量预测系统_openapi.json</code>（由
+    <code>scripts/export_openapi.py</code> 生成）。前端侧接入细节见
+    <a href="前端.html">前端入口</a> 页。
+  </footer>
+</main>
+
+<script>
+/* 服务状态检测
+   ---------------------------------------------------------------------------
+   用 `fetch(url, {mode:'no-cors'})` 探测：服务在 → resolve；端口没人听 → reject。
+   这是从 file:// 页面（origin 为 null）判活的唯一可行方式 ——
+   普通 fetch 会因跨源被拦，而 img 探针对返回 text/html 的服务无法区分（同样 onerror）。
+   实测（Edge 155，file:// 打开本页）：服务在 resolve / 死端口 reject ✅ */
+(function () {
+  var SVC = [
+    { k: 'backend', url: 'http://127.0.0.1:8000/health' },
+    { k: 'frontend', url: 'http://localhost:5173/' }
+  ];
+
+  function probe(url, ms) {
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var timer = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, ms);
+    return fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function () { clearTimeout(timer); return true; })
+      .catch(function () { clearTimeout(timer); return false; });
+  }
+
+  function paint(k, up) {
+    var dot = document.querySelector('.dot[data-svc="' + k + '"]');
+    var st = document.querySelector('.svc-state[data-state="' + k + '"]');
+    if (dot) dot.className = 'dot ' + (up ? 'up' : 'down');
+    if (st) { st.className = 'svc-state ' + (up ? 'up' : 'down'); st.textContent = up ? '运行中' : '未启动'; }
+  }
+
+  function reset(k) {
+    var dot = document.querySelector('.dot[data-svc="' + k + '"]');
+    var st = document.querySelector('.svc-state[data-state="' + k + '"]');
+    if (dot) dot.className = 'dot';
+    if (st) { st.className = 'svc-state'; st.textContent = '检测中…'; }
+  }
+
+  function run() {
+    var box = document.getElementById('svc');
+    var sum = document.getElementById('svc-summary');
+    var guide = document.getElementById('svc-guide');
+    SVC.forEach(function (s) { reset(s.k); });
+    if (box) box.className = 'svc';
+    if (sum) sum.textContent = '正在检测服务状态…';
+    if (guide) guide.className = 'guide';
+
+    Promise.all(SVC.map(function (s) {
+      return probe(s.url, 2500).then(function (up) { paint(s.k, up); return up; });
+    })).then(function (res) {
+      var be = res[0], fe = res[1], cls, text;
+      if (fe && be) { cls = 'svc ok'; text = '前后端均已就绪 —— 文档与接口都可访问。'; }
+      else if (!be) { cls = 'svc bad'; text = '后端服务未启动 —— 下面的在线文档暂时打不开，请先按下方命令启动。'; }
+      else { cls = 'svc warn'; text = '前端服务未启动 —— 后端正常，但用户界面打不开。'; }
+      if (box) box.className = cls;
+      if (sum) sum.textContent = text;
+      if (guide && !(fe && be)) guide.className = 'guide show';
+    });
+  }
+
+  var btn = document.getElementById('svc-recheck');
+  if (btn) btn.addEventListener('click', run);
+  run();
+})();
+</script>
+</body>
+</html>

@@ -74,7 +74,14 @@ export function createClient(): AxiosInstance {
   instance.interceptors.request.use((config) => {
     const token = tokenStore.get();
     if (token) {
+      // 标准头（直连 / Nginx 部署用）
       config.headers.Authorization = `Bearer ${token}`;
+      // 🔴 备用头（2026-10-19）：部分托管平台的网关会**注入并覆盖**
+      //    `Authorization`，导致客户端真正的 token 被丢弃，表现为
+      //    「登录成功但立刻被 401 退回登录页」。后端 `deps._pick_token()`
+      //    对 X-Auth-Token 的优先级高于 Authorization，因此这条能穿透网关。
+      //    直连部署时两者内容一致，不会产生副作用。
+      config.headers['X-Auth-Token'] = token;
     }
     return config;
   });
