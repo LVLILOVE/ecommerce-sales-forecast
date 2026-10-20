@@ -39,6 +39,7 @@ import HistoryPage from '../pages/HistoryPage';
 import HomePage from '../pages/HomePage';
 import LoginPage from '../pages/LoginPage';
 import ParamsPage from '../pages/ParamsPage';
+import ProfilePage from '../pages/ProfilePage';
 import RegisterPage from '../pages/RegisterPage';
 import ResultPage from '../pages/ResultPage';
 import RunningPage from '../pages/RunningPage';
@@ -131,6 +132,19 @@ export const router: RouteObject[] = [
       </RequireAuth>
     ),
     children: [{ index: true, element: <ComparePage /> }],
+  },
+  {
+    // 🔒 FR-USR-07（P1）：个人资料 —— 查看账号信息、改昵称、改密码。
+    //    挂 `RequireAuth`：本页全部操作都作用于「当前登录用户」，
+    //    游客（`user_id=0`）没有可维护的账号实体。
+    //    入口在顶栏用户区（`AppShell`），**不占侧栏 4 项 IA**。
+    path: '/profile',
+    element: (
+      <RequireAuth>
+        <AppLayout />
+      </RequireAuth>
+    ),
+    children: [{ index: true, element: <ProfilePage /> }],
   },
   {
     // 🔒 EP-8：`AD-P01` 运营看板（`CH-01`）。

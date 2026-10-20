@@ -46,6 +46,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const login = useAuthStore((s) => s.login);
+  const clear = useAuthStore((s) => s.clear);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const status = useAuthStore((s) => s.status);
 
@@ -57,14 +58,33 @@ export default function LoginPage() {
   /** 冷却截止时间（毫秒时间戳）。0 表示不在冷却中 */
   const [lockedUntil, setLockedUntil] = useState(0);
   const [tick, setTick] = useState(() => Date.now());
+  /**
+   * 「强制登出」只执行一次的守卫。
+   * ⚠️ `forceLogout` 来自 `location.state`，登录成功后路由仍是 `/login`、
+   *    state 也还在 —— 若不加这个守卫，用户输对新密码后会被 effect 再次
+   *    `clear()` 掉，表现为「登录成功瞬间又被踢回登录页」（实测踩到）。
+   */
+  const [forcedLogoutDone, setForcedLogoutDone] = useState(false);
 
   // 已登录（含刷新后 token 仍有效）→ 直接进工作台或回来源页
   const from = (location.state as { from?: string } | null)?.from;
+  /** 其他页面跳来时的一次性成功提示（如 `/profile` 改密成功 → 请用新密码登录） */
+  const notice = (location.state as { notice?: string } | null)?.notice ?? '';
+  /** 改密后要求强制登出（由 `ProfilePage` 传入，见下方 effect） */
+  const forceLogout = (location.state as { forceLogout?: boolean } | null)?.forceLogout === true;
   useEffect(() => {
     if (status === 'ready' && isAuthenticated) {
+      // 🔒 改密后的强制登出：由 `ProfilePage` 跳转过来时带 `forceLogout`。
+      //    放在这里而不是资料页，是为了避免「clear() 紧急更新 vs navigate transition」
+      //    的竞态 —— 那样会让 RequireAuth 抢先重定向并覆盖 notice（实测过）。
+      if (forceLogout && !forcedLogoutDone) {
+        setForcedLogoutDone(true);
+        clear();
+        return;
+      }
       navigate(from ?? '/dashboard', { replace: true });
     }
-  }, [status, isAuthenticated, from, navigate]);
+  }, [status, isAuthenticated, from, navigate, forceLogout, forcedLogoutDone, clear]);
 
   // 冷却倒计时
   useEffect(() => {
@@ -150,6 +170,23 @@ export default function LoginPage() {
           </Link>
         </p>
       </div>
+
+      {/* 改密成功等一次性提示（成功态，与下方错误态分开配色） */}
+      {notice !== '' && (
+        <div
+          className="mb-4 flex gap-2.5 rounded-[var(--radius-sm)] px-3.5 py-3"
+          style={{
+            background: 'var(--success-soft)',
+            border: '1px solid color-mix(in oklab, var(--success) 34%, transparent)',
+          }}
+          role="status"
+          data-testid="login-notice"
+        >
+          <div className="text-[0.75rem] leading-[1.7]">
+            <p style={{ color: 'var(--text)' }}>{notice}</p>
+          </div>
+        </div>
+      )}
 
       {/* 错误 / 限流提示（UX-P02-02、UX-P02-03 的 `.alert-danger`）。
           类名沿用原型语义命名，仅作结构与测试钩子，样式由 Tailwind + 令牌承担。 */}

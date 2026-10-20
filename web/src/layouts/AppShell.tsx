@@ -80,6 +80,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <span className="text-[0.8125rem]" style={{ color: 'var(--text-2)' }}>
                 {user.nickname ?? user.email}
               </span>
+              {/* FR-USR-07 的入口：放在用户区而非侧栏 ——
+                  侧栏是「业务导航」4 项（IA 固定），个人资料属于账号级操作，
+                  与「退出登录」同属一组语义。 */}
+              <Link
+                to="/profile"
+                className="text-[0.75rem] no-underline hover:underline"
+                style={{ color: pathname === '/profile' ? 'var(--primary)' : 'var(--text-3)' }}
+                data-testid="nav-profile"
+              >
+                个人资料
+              </Link>
               {isAdmin && (
                 <>
                   <span
