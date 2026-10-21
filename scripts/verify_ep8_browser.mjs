@@ -43,10 +43,17 @@ const API = process.env.API_URL || 'http://127.0.0.1:8021';
 //    走查脚本必须**可重复执行**，这是硬要求。
 const USER_EMAIL =
   process.env.EP8_USER_EMAIL || `ep8b_${Date.now().toString(36)}@verify.com`;
-// 管理员种子账号（口令与 code/db/seed.sql 的 bcrypt 注释同源）
+// 管理员种子账号（邮箱可默认；**口令必须由环境变量提供**）
 const ADMIN_EMAIL = process.env.EP8_ADMIN_EMAIL || 'admin@salesforecast.cn';
 const PASSWORD = process.env.EP8_PASSWORD || 'Verify123456';
-const ADMIN_PASSWORD = process.env.EP8_ADMIN_PASSWORD || 'Admin@2026';
+// 🔒 不设默认口令：本文件会入库（仓库公开），且管理端口令随时可能被修改 ——
+//    硬编码默认值会在「口令已改」之后把「口令不对」误报成「功能失败」。
+const ADMIN_PASSWORD = process.env.EP8_ADMIN_PASSWORD || '';
+if (!ADMIN_PASSWORD) {
+  console.error('缺少管理端口令：请用 EP8_ADMIN_PASSWORD 环境变量提供（种子口令见 code/db/seed.sql）。');
+  console.error('示例：EP8_ADMIN_PASSWORD=<口令> node scripts/verify_ep8_browser.mjs');
+  process.exit(2);
+}
 const OUT = process.env.OUT_DIR || 'outputs/ep8-shots';
 
 const PROFILE = path.resolve(OUT, `.edge-profile-${Date.now()}`);

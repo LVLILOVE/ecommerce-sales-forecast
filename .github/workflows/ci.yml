@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 说明
+# ---------------------------------------------------------------------------
+# 这里只跑「不依赖模型权重与数据库」的检查，因此可以在干净 runner 上秒级完成：
+#   · 前端：类型检查（tsc --noEmit）→ ESLint（--max-warnings 0）→ 生产构建
+#   · 后端：全量语法编译（py_compile / compileall，不需要安装 torch 等重依赖）
+#
+# 完整质量保障在 `scripts/` 下的 38 套断言脚本里，它们需要
+# `outputs/models/lstm_v1.pt` 与初始化后的 SQLite 库（均不入库），
+# 属于本地/交付前回归，不放在此 workflow。
+
+jobs:
+  frontend:
+    name: 前端（typecheck · lint · build）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: ESLint（零警告）
+        run: npm run lint
+
+      - name: 生产构建
+        run: npm run build
+
+      - name: 产物自检（index.html 必须引用带 hash 的 assets）
+        run: |
+          test -f dist/index.html
+          grep -qE 'assets/index-[A-Za-z0-9_-]+\.js' dist/index.html
+          echo "构建产物 OK"
+          ls -la dist/assets | head -10
+
+  backend:
+    name: 后端（语法编译）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 全量语法编译（不装依赖）
+        run: python -m compileall -q app scripts code/backend
+
+      - name: schema.sql 基本完整性（8 张表 / 含管理员种子）
+        run: |
+          grep -c 'CREATE TABLE' code/db/schema.sql
+          grep -q 'users' code/db/schema.sql
+          echo "schema.sql OK"
+
+  hygiene:
+    name: 仓库卫生（密钥与产物不入库）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 禁止入库的文件不得存在
+        run: |
+          fail=0
+          for p in .env deploy/web/dist web/node_modules; do
+            if git ls-files --error-unmatch "$p" >/dev/null 2>&1; then
+              echo "::error::不允许入库：$p"
+              fail=1
+            fi
+          done
+          if git ls-files | grep -qE '^deploy/'; then
+            echo "::error::deploy/ 含生产密钥，不得入库"
+            fail=1
+          fi
+          exit $fail
+
+      - name: 源码中不得出现明文默认口令
+        run: |
+          if git grep -n -- 'Admin@2026' -- 'web/src' 'app' 'scripts/*.mjs'; then
+            echo "::error::源码中出现种子默认口令，请改为环境变量或占位符"
+            exit 1
+          fi
+          echo "口令检查 OK"

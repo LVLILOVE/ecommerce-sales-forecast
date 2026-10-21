@@ -68,9 +68,15 @@ const PREVIEW = process.env.PREVIEW_URL || 'http://127.0.0.1:4173';
 const OUT = process.env.OUT_DIR || 'outputs/ep9-shots';
 const PORT = Number(process.env.CDP_PORT || 9900 + (process.pid % 90));
 
-// 种子管理员（口令与 code/db/seed.sql 的 bcrypt 注释同源）
+// 种子管理员（邮箱可默认；**口令必须由环境变量提供**）
 const ADMIN_EMAIL = process.env.EP9_ADMIN_EMAIL || 'admin@salesforecast.cn';
-const ADMIN_PASSWORD = process.env.EP9_ADMIN_PASSWORD || 'Admin@2026';
+// 🔒 不设默认口令：本文件会入库（仓库公开），且管理端口令随时可能被修改。
+const ADMIN_PASSWORD = process.env.EP9_ADMIN_PASSWORD || '';
+if (!ADMIN_PASSWORD) {
+  console.error('缺少管理端口令：请用 EP9_ADMIN_PASSWORD 环境变量提供（种子口令见 code/db/seed.sql）。');
+  console.error('示例：EP9_ADMIN_PASSWORD=<口令> BROWSER=edge node scripts/verify_ep9_browser.mjs');
+  process.exit(2);
+}
 const PASSWORD = process.env.EP9_PASSWORD || 'Verify123456';
 // ⚠️ 带时间戳：邮箱全局唯一，固定邮箱第二次跑会「已存在」而失败。
 //    走查脚本必须**可重复执行**。
