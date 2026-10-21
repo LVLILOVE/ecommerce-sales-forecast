@@ -2,7 +2,8 @@
 """校验 `docs/*.md` 与 `outputs/` 下 Word / PDF 导出件是否齐备且**未过期**。
 
 用法：
-    python scripts/verify_doc_exports.py
+    python scripts/verify_doc_exports.py            # 缺 pymupdf 时降级并**在结论里标明未检目录域**
+    python scripts/verify_doc_exports.py --strict   # 拒绝降级：缺 pymupdf 即判未通过（交付前 / CI 用）
 
 背景（本脚本的由来）：
     `docs/` 放 Markdown 源，`outputs/` 放交给评审的 `.docx` / `.pdf`。
@@ -67,6 +68,9 @@ MIN_PDF = 100 * 1024         # 100 KB
 
 
 def main() -> int:
+    # `--strict`：拒绝降级。缺 pymupdf 时直接判未通过（交付前/CI 用），
+    # 避免「跳过检查却打印通过」这种**自证清白**的结论。
+    strict = "--strict" in sys.argv[1:]
     try:
         import pymupdf
         have_pdf_lib = True
@@ -138,17 +142,30 @@ def main() -> int:
     print()
     print("-" * 78)
     print(f"受检导出件 {n_pair} 组（docx + pdf）；目录域抽查 {toc_checked} 份 PDF")
-    if not have_pdf_lib:
+    degraded = not have_pdf_lib
+    if degraded:
         print("  [WARN] 未安装 pymupdf，已跳过页数与目录域检查（仅查存在性 / 新鲜度）")
+        print("         ⇒ 本次运行**不能**证明 TOC 已展开；请用装了 pymupdf 的环境复跑，或加 --strict 让本脚本拒绝降级。")
     print("-" * 78)
     if fails:
         print(f"结论：{len(fails)} 项未通过")
         for f in fails:
             print("  [FAIL]", f)
+    elif degraded:
+        # 🔴 降级运行时**不得**声称「目录已展开」—— 本轮就踩过：
+        #    默认环境缺 pymupdf，脚本跳过了检查，结论却照打印「目录已展开」，
+        #    等于给出了自己没验证过的断言。措辞必须与检查范围严格对应。
+        print(f"结论：{n_pair}/{n_pair} 通过（齐备 · 新鲜）"
+              f" ⚠️ 未检页数与目录域（缺 pymupdf）")
     else:
         print(f"结论：{n_pair}/{n_pair} 全部通过（齐备 · 新鲜 · 目录已展开）")
     print("=" * 78)
-    return 0 if not fails else 1
+    if fails:
+        return 1
+    if degraded and strict:
+        print("  [STRICT] 已要求真检，但缺少 pymupdf —— 判定为未通过")
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

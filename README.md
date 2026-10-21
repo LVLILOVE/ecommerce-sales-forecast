@@ -171,6 +171,14 @@ SERVE_FRONTEND=1 FRONTEND_DIR=web/dist ALLOW_GUEST=false python -m uvicorn app.m
 
 ⚠️ **`--workers` 必须为 1**：登录限流计数与登出 `jti` 黑名单在进程内存，多进程会让限流与撤销失效。
 
+**数据备份**（SQLite 在 WAL 模式下**不可直接 `cp`**，会拿到缺 WAL 内容的不一致快照）：
+
+```bash
+python scripts/backup_db.py --keep 7      # 在线备份 + 轮转 + integrity_check + 逐表行数比对
+```
+
+建议挂到 cron / 任务计划程序（手册 §7.1 有示例）。备份产物落在 `backups/`（已 gitignore）。
+
 ---
 
 ## 八、文档索引
