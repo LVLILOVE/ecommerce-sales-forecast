@@ -1,0 +1,51 @@
+name: Pages（静态设计原型）
+
+# 把 prototype/ 发布成 GitHub Pages 站点。
+#
+# 目的：当正式应用（FastAPI + React + LSTM）的托管环境不可用时，
+#       访问者仍能看到一个「真实可点击」的完整界面 ——
+#       prototype/ 是纯静态（零外链、零网络请求、资源全相对路径），
+#       因此可以原样挂到 /<repo>/ 子路径下，不需要任何后端。
+#
+# 站点地址：https://lvlilove.github.io/ecommerce-sales-forecast/
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'prototype/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时刻只允许一个 Pages 部署，新的覆盖旧的（不取消进行中的，避免站点短暂 404）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      # 只发布 prototype/ 目录，仓库其余内容（docs / outputs / web）不进站点
+      - name: 打包 prototype/
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: prototype
+
+      - name: 部署
+        id: deployment
+        uses: actions/deploy-pages@v4
