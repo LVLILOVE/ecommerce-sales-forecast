@@ -4,6 +4,36 @@
 >
 > **纯预训练推理**（请求内不训练），端到端 **≤ 60 s** 硬约束；对稀疏商品按 `L1→L2→L3` 三级降级，宁可如实标注「不可预测」也不硬凑数字。
 
+## 在线体验（Demo）
+
+| 入口 | 链接 | 说明 |
+|---|---|---|
+| 🚀 **前端应用** | **https://sales-forecast-27153.app.workbuddy.host/** | 打开即用（首次访问需 15–30 s 冷启动） |
+| 📘 接口文档 | https://sales-forecast-27153.app.workbuddy.host/docs | Swagger UI，静态资源已离线化，零外链 |
+| 🧩 静态设计原型 | [`prototype/index.html`](prototype/index.html) | clone 后双击即看，**不依赖任何服务** |
+
+**三步跑通一次预测**（无需准备数据）：
+
+1. 打开上面的前端地址 → 点「**注册**」创建账号（邮箱 + 密码，即时生效）
+2. 登录后进「新建预测」→ 点「**加载示例数据**」（内置 40 SKU × 5 仓 / 113 条序列 / 220 天）
+3. 选预测步长 → 提交 → 结果页给出四项指标、移动平均基线对照与逐序列曲线
+
+> **为什么必须注册**：线上版本关闭了「游客免登录」（`ALLOW_GUEST=false`）。这是刻意的安全取舍 —— 原设计把游客数据放在共享桶（`user_id = 0`），公开部署会让访客上传的销量表互相可见。
+> 想免登录试用，请按 §四 本地运行并设 `ALLOW_GUEST=true`（默认值）。
+
+<details>
+<summary>⚠️ 在线地址打不开？三种替代方式</summary>
+
+在线环境是免费沙箱：**闲置会被缩容**，冷启动需 15–30 s。若等 60 s 仍无响应，改用下面任一种：
+
+| 方式 | 做法 | 能看到 |
+|---|---|---|
+| **静态原型** | clone 后双击 `prototype/index.html` | 13 个页面的完整视觉与交互（合成数据，零依赖） |
+| **本地完整运行** | §四「快速开始」：`pip install -r requirements.txt` + `npm run dev` | 全部功能，含真实 LSTM 推理 |
+| **截图与实测数据** | `docs/assets/readme/`、`outputs/` | 界面外观、验收截图、指标报告 |
+
+</details>
+
 ![首页](docs/assets/readme/01-home.png)
 
 ---
@@ -165,6 +195,8 @@ python scripts/verify_doc_exports.py   # docx/pdf 齐备 + 新鲜度 + TOC 已�
 ```bash
 SERVE_FRONTEND=1 FRONTEND_DIR=web/dist ALLOW_GUEST=false python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+> 本仓库上方的**在线 Demo 就是「单端口托管」形态**（`SERVE_FRONTEND=1` + `ALLOW_GUEST=false`），前端产物由 FastAPI 直接托管、SPA 深链兜底，无需 Nginx。
 
 必读：`docs/电商销量预测系统_部署运维手册_V1.0.md`（Nginx / systemd / 备份 / 监控 / 容量）；
 公网发布与权限收敛见 `outputs/对外发布与多用户访问方案_V1.0.md`。
