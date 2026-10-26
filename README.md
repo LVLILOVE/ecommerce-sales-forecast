@@ -1,5 +1,7 @@
 # 电商销量预测系统
 
+![LSTM · PyTorch 2.9](docs/assets/readme/badges/LSTM-PyTorch.png) ![FastAPI + SQLite](docs/assets/readme/badges/FastAPI-SQLite.png) ![React 18 + TypeScript](docs/assets/readme/badges/React-TS.png) ![WAPE 14.26%](docs/assets/readme/badges/WAPE.png) ![38 套校验](docs/assets/readme/badges/test-suites.png)
+
 > 面向「**仓库 × 商品**」粒度的销量预测 Web 应用：上传 CSV → 校验与特征工程 → LSTM 预测 → 结果可视化与导出，含历史任务、跨任务对比与运营管理端。
 >
 > **纯预训练推理**（请求内不训练），端到端 **≤ 60 s** 硬约束；对稀疏商品按 `L1→L2→L3` 三级降级，宁可如实标注「不可预测」也不硬凑数字。
@@ -17,6 +19,9 @@
 1. 打开上面的前端地址 → 点「**注册**」创建账号（邮箱 + 密码，即时生效）
 2. 登录后进「新建预测」→ 点「**加载示例数据**」（内置 40 SKU × 5 仓 / 113 条序列 / 220 天）
 3. 选预测步长 → 提交 → 结果页给出四项指标、移动平均基线对照与逐序列曲线
+
+> 🧪 **想试校验失败分支？** `demo/` 下有三份数据 —— `演示数据_正常.csv`／`演示数据_失败_缺仓库列.csv`／`演示数据_失败_负销量.csv`，
+> 也可从 [v1.0.0 附件](https://github.com/LVLILOVE/ecommerce-sales-forecast/releases/tag/v1.0.0) 直接下载，上传后能看到 7 步校验的逐项报错与错误明细 CSV。
 
 > **为什么必须注册**：线上版本关闭了「游客免登录」（`ALLOW_GUEST=false`）。这是刻意的安全取舍 —— 原设计把游客数据放在共享桶（`user_id = 0`），公开部署会让访客上传的销量表互相可见。
 > 想免登录试用，请按 §四 本地运行并设 `ALLOW_GUEST=true`（默认值）。
