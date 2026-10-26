@@ -1,8 +1,8 @@
 {
   "stage": "WS-9-09 校验链全绿（清单守卫）",
-  "passed": 55,
+  "passed": 56,
   "failed": 0,
-  "chain_size": 38,
+  "chain_size": 39,
   "items": [
     {
       "name": "[算法] self_check.py 存在",
@@ -58,6 +58,11 @@
       "name": "[API] verify_auth.py 存在",
       "ok": true,
       "detail": "（缺失：C:\\Users\\Administrator\\WorkBuddy\\销量预测\\scripts\\verify_auth.py）"
+    },
+    {
+      "name": "[API] verify_register_rate.py 存在",
+      "ok": true,
+      "detail": "（缺失：C:\\Users\\Administrator\\WorkBuddy\\销量预测\\scripts\\verify_register_rate.py）"
     },
     {
       "name": "[静态] verify_ep3.py 存在",
@@ -195,7 +200,7 @@
       "detail": "（缺失：C:\\Users\\Administrator\\WorkBuddy\\销量预测\\scripts\\verify_doc_exports.py）"
     },
     {
-      "name": "scripts/ 下 37 个校验脚本全部已登记（无漏网）",
+      "name": "scripts/ 下 38 个校验脚本全部已登记（无漏网）",
       "ok": true,
       "detail": "（未登记：[]）"
     },

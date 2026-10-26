@@ -28,11 +28,12 @@ from fastapi.staticfiles import StaticFiles
 from app.api.health import router as health_router
 from app.api.v1.router import api_router
 from app.core import config
-from app.core.db import init_db
+from app.core.db import SessionLocal, init_db
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import AccessLogMiddleware, RequestIDMiddleware
 from app.core.model_holder import holder, load_active_model
+from app.dao import token_dao
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,22 @@ async def lifespan(app: FastAPI):
     # 直接执行 code/db/schema.sql，不用 Base.metadata.create_all()
     # —— 后者建不出视图、触发器与游客哨兵行（见 core/db.py 的设计说明）。
     init_db(run_seed=True)
+
+    # 清理已自然过期的 Token 黑名单行（`R-03`：`revoked_tokens` 表，`DB-T09`）。
+    # 🔒 需要它是因为「按 exp 自动消失」只有内存字典能做到，落库后过期行会一直留着。
+    #    每次启动清一次就够：表规模上限 = 「同时段内登出的 Token 数」，
+    #    单次会话（默认 12 小时）内积不到需要额外定时任务的程度；
+    #    真到了需要定时清理的规模，说明该换 Redis 了，而不是加个 cron。
+    # ⚠️ 失败不阻断启动：清不掉过期行只是表里多几行，不影响鉴权正确性
+    #    （判定用的是精确 `jti` 命中，不是「有没有过期行」）。
+    try:
+        with SessionLocal() as _db:
+            purged = token_dao.purge_expired(_db)
+            _db.commit()
+        if purged:
+            logger.info("已清理过期 Token 黑名单 %s 行", purged)
+    except Exception:  # noqa: BLE001 - 启动清理不得阻断服务
+        logger.exception("清理过期 Token 黑名单失败（不影响鉴权正确性）")
 
     # 预加载启用模型（`BE-15` / §4.1.1 启动自检清单）。
     # 🔒 失败即启动失败，不做降级重试：

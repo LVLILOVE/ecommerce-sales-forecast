@@ -276,6 +276,26 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS ix_events_name_time ON events (event_name, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_events_task      ON events (task_id);
 
+-- -----------------------------------------------------------------------------
+-- T09 · revoked_tokens Token 黑名单表                    （R-03 / BE-19，2026-10-26）
+-- -----------------------------------------------------------------------------
+-- 为什么从「进程内存」改成落库：
+--   内存版在两种真实场景下会静默失效 ——
+--     ① 进程重启 → 已登出的 Token 在重启后又"活"回来（直到 exp 自然过期）；
+--     ② 多 worker / 多实例 → 在 A 进程登出，旧 Token 打到 B 进程照样放行。
+--   两者都不会报错，只会让「登出」这个动作变得不可靠。
+-- `jti` 作主键：同一 Token 重复登出天然幂等（INSERT OR IGNORE）。
+-- `expires_at` 与 JWT 的 `exp` 同源（Unix 秒），过期行由启动时的清理任务删除，
+--   故常驻规模上限 = 「同时段内登出的 Token 数」，不会无限增长。
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+    jti         TEXT    PRIMARY KEY,                        -- JWT 的 jti（32 位 hex）
+    user_id     INTEGER DEFAULT NULL,                       -- 归属用户，便于排障；游客不签发 Token 故不受影响
+    expires_at  INTEGER NOT NULL,                           -- Token 原 exp（Unix 秒）：到期即可删行
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS ix_revoked_tokens_exp ON revoked_tokens (expires_at);
+
 -- =============================================================================
 -- 触发器：自动维护 updated_at
 -- =============================================================================

@@ -30,6 +30,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -254,8 +255,23 @@ with TestClient(app) as c:
     check("T-A28 🔒 登出后旧 Token 立即失效 → 40102（黑名单生效）",
           r.status_code == 401 and body(r).get("code") == 40102,
           f"（HTTP {r.status_code} / {body(r)}）")
-    check("T-A29 黑名单有记录（revoked_count >= 1）", security.revoked_count() >= 1,
-          f"（{security.revoked_count()}）")
+
+    # 🔒 R-03（2026-10-26）：黑名单已从进程内存迁到 `revoked_tokens` 表。
+    #    这里用**独立的 sqlite3 连接**直接数行，而不是调某个内存计数函数 ——
+    #    这条断言的语义就是「进程重启后仍然生效」：重启丢的只有内存，丢不了库。
+    jti2 = security.decode_access_token(token2).get("jti")
+    with sqlite3.connect(str(settings.db_path)) as _conn:
+        _rows = _conn.execute(
+            "SELECT COUNT(*) FROM revoked_tokens WHERE expires_at > ?", (int(time.time()),)
+        ).fetchone()[0]
+        _hit = _conn.execute(
+            "SELECT user_id, expires_at FROM revoked_tokens WHERE jti = ?", (jti2,)
+        ).fetchone()
+    check("T-A29 🔒 黑名单落库（revoked_tokens 有效行 >= 1，重启不丢）",
+          _rows >= 1, f"（{_rows} 行）")
+    check("T-A29b 落库的 jti 与本次登出的 Token 一一对应，且带 user_id / exp",
+          _hit is not None and isinstance(_hit[0], int) and _hit[1] > int(time.time()),
+          f"（jti={jti2} row={_hit}）")
 
     # =============================================================== 管理员
     r = c.post("/api/v1/auth/login",
@@ -336,8 +352,8 @@ with TestClient(probe) as pc:
           r.status_code == 401 and body(r).get("code") == 40101,
           f"（HTTP {r.status_code} / {body(r)}）")
 
-note("黑名单为进程内存实现（BE-19 方案 B）：单进程部署有效；"
-     "若改为多进程（gunicorn -w N），需迁至 Redis，否则「A 进程登出、旧 Token 打 B 进程」会绕过（T-Q12）。")
+note("黑名单已落库（revoked_tokens · DB-T09 · R-03）：进程重启后已登出的 Token 仍然失效，"
+     "多 worker 下各进程查同一张表也不会互相绕过（历史局限 T-Q12 已关闭）。")
 note("未知邮箱的失败计数在内存（_UNKNOWN_FAIL），进程重启即清空；"
      "真实用户的计数落库，不受重启影响。这是对 API-02-1 防枚举的补强。")
 note("「记住我」不影响 Token 有效期（后端统一 JWT_EXPIRE_MINUTES）。")

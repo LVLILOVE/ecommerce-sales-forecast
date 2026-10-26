@@ -47,7 +47,7 @@ from sqlalchemy.orm import Session
 
 from app.core import config, security
 from app.core.errors import BizError, ErrorCode
-from app.dao import oplog_dao, user_dao
+from app.dao import oplog_dao, token_dao, user_dao
 from app.models.operation_log import RESULT_FAIL, RESULT_SUCCESS
 from app.models.user import User
 
@@ -166,8 +166,12 @@ def register(
     密码强度与 72 字节上限已由 `RegisterRequest` 校验；此处再经
     `security.hash_password` 兜底一次（防止绕过 schema 的内部调用）。
 
-    :raises BizError: `40105` 邮箱已注册
+    :raises BizError: `40105` 邮箱已注册 / `40104` 注册过于频繁（`R-07`）
     """
+    # 🔒 限流必须在 hash_password **之前**：bcrypt 是注册链路里最贵的一步，
+    #    放在后面等于「限流自己也要付一次哈希成本」，被刷时形同虚设。
+    _assert_register_allowed(db, ip=ip)
+
     email = normalize_email(email)
     password_hash = security.hash_password(password)
     nickname = (nickname or "").strip() or default_nickname(email)
@@ -189,6 +193,87 @@ def register(
     _record(db, action="register", user_id=user.id, target_id=user.id, ip=ip)
     logger.info("注册成功 user_id=%s email=%s", user.id, email)
     return user
+
+
+# ---------------------------------------------------------------------------
+# 注册限流（`R-07`，2026-10-26）
+# ---------------------------------------------------------------------------
+_REG_ATTEMPT_LOCK = threading.Lock()
+_REG_ATTEMPTS: dict[str, tuple[int, datetime]] = {}
+"""`ip -> (窗口内已尝试次数, 窗口起始时刻)`，**固定窗口**计数。
+
+🔒 **为什么是两层，而不是只做一层**（这是本节最容易被"简化"掉的地方）：
+
+- **库层**（`operation_logs` 里 `action='register'` 的成功条数）：管「真实建出来的
+  账号数」。必须抗重启，否则攻击者等一次发布就能把配额清零。
+- **内存层**（本字典）：管「每一次尝试」，**含注定失败的**。因为 `register()`
+  里 bcrypt 在入库之前执行，一个「邮箱已存在」的失败请求同样要付 ~250 ms
+  的哈希成本 ⇒ 只限成功数的话，刷 40105 就是一个免费的 CPU DoS。
+
+  反过来把「尝试数」也写进库是不可行的：被刷时审计表先爆，
+  等于把「消耗算力」升级成「消耗磁盘 + 污染审计日志」。
+  内存层重启清零可以接受 —— 它只是「降速」，真正的配额在库层。
+"""
+
+
+def _rate_limited(retry_after: float) -> BizError:
+    """构造限流异常。
+
+    错误码**复用 `40104`**（前端镜像里它的注释就是「限流冷却中」）：
+    PRD 的错误码表是按「登录失败锁定」命名的，但它表达的状态
+    （操作过于频繁 + `retry_after_seconds`）与注册限流完全一致。
+    新增一个 `40106` 需要同步改 PRD / 技术文档 / 前端镜像三处，
+    收益只是让枚举值更"整洁"，不值得 —— 用户看到的是 `message`，不是码。
+    """
+    remain = max(1, int(retry_after))
+    return BizError(
+        ErrorCode.LOGIN_LOCKED,
+        f"操作过于频繁，请 {remain} 秒后再试",
+        {"retry_after_seconds": remain},
+    )
+
+
+def _assert_register_allowed(db: Session, *, ip: str | None) -> None:
+    """注册前置限流（`R-07`）。
+
+    :raises BizError: `40104` 冷却中，`data.retry_after_seconds` 给出剩余秒数
+    """
+    window = max(1, int(config.settings.register_window_seconds))
+    now = _now()
+
+    # ---- 第 1 层：窗口内的成功注册数（库计数，抗重启） ----
+    max_success = int(config.settings.register_max_success)
+    if max_success > 0:
+        since = _fmt(now - timedelta(seconds=window))
+        done, oldest = oplog_dao.count_recent(
+            db, action="register", ip=ip, since=since
+        )
+        if done >= max_success:
+            # 用「窗口内最早那条」推算解锁时刻，才能给出准确的重试秒数
+            retry = float(window)
+            if oldest:
+                retry = (_parse(oldest) + timedelta(seconds=window) - now).total_seconds()
+            logger.warning(
+                "注册被限流（成功数）ip=%s done=%s/%s", ip, done, max_success
+            )
+            raise _rate_limited(retry)
+
+    # ---- 第 2 层：窗口内的尝试次数（内存固定窗口，含失败） ----
+    max_attempts = int(config.settings.register_max_attempts)
+    if max_attempts <= 0:
+        return
+    key = ip or "-"
+    with _REG_ATTEMPT_LOCK:
+        count, start = _REG_ATTEMPTS.get(key, (0, now))
+        if (now - start).total_seconds() >= window:
+            count, start = 0, now
+        if count >= max_attempts:
+            logger.warning("注册被限流（尝试数）ip=%s count=%s/%s", ip, count, max_attempts)
+            raise _rate_limited(window - (now - start).total_seconds())
+        # 条目数上界防御：被大量不同 IP 刷时不能让字典无限长
+        if len(_REG_ATTEMPTS) > 4096:
+            _REG_ATTEMPTS.clear()
+        _REG_ATTEMPTS[key] = (count + 1, start)
 
 
 # ---------------------------------------------------------------------------
@@ -367,11 +452,14 @@ def login(
 def logout(db: Session, *, user_id: int, jti: str, exp: int, ip: str | None = None) -> None:
     """登出：把当前 Token 的 `jti` 加入黑名单（`API-03` / `FR-USR-05`）。
 
-    ⚠️ 黑名单是进程内存（`BE-19` 方案 B）。单机部署下「登出后旧 Token 立即
-       HTTP 401」成立；多进程部署会失效，届时需迁至 Redis（见 `security.py`）。
+    🔒 黑名单落库（`revoked_tokens`，`DB-T09`，`R-03` 起）。此前是进程内存，
+       重启后已登出的 Token 会「复活」、多 worker 下各算一套 —— 且都不报错。
+       现在与登出在**同一事务**里写入：登出成功 ⇔ 黑名单生效，
+       不会出现「审计写了但 Token 还能用」的错位。
     """
-    security.revoke_token(jti, exp)
+    token_dao.revoke(db, jti=jti, expires_at=exp, user_id=user_id)
     _record(db, action="logout", user_id=user_id, target_id=user_id, ip=ip)
+    logger.info("token revoked jti=%s user_id=%s", jti, user_id)
 
 
 # ---------------------------------------------------------------------------

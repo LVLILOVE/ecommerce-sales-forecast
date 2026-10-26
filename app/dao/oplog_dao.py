@@ -26,6 +26,7 @@ __all__ = [
     "record",
     "list_paged",
     "count",
+    "count_recent",
     "count_by_action",
 ]
 
@@ -106,6 +107,37 @@ def count(
     if user_id is not None:
         stmt = stmt.where(OperationLog.user_id == user_id)
     return int(db.execute(stmt).scalar_one())
+
+
+def count_recent(
+    db: Session,
+    *,
+    action: str,
+    ip: str | None,
+    since: str,
+    result: str | None = RESULT_SUCCESS,
+) -> tuple[int, str | None]:
+    """统计某 IP 在 `since` 之后的成功操作条数，并返回窗口内最早一条的时间。
+
+    🔒 存在的理由（`R-07` 注册限流）：计数必须落**库**而不是内存。
+       「注册配额」如果只存在进程内存里，重启即清零 ⇒ 攻击者只要等一次
+       发布/重启就能重置配额；且未来上多 worker 时各进程各算一套。
+
+    :param since: `YYYY-MM-DD HH:MM:SS`（与 DDL 的 `created_at` 同格式，
+                  字符串比较即时间比较，见 `NFR-COMP-04` 单时区假设）。
+    :return: `(条数, 窗口内最早一条的 created_at 或 None)`
+    """
+    stmt = select(func.count(), func.min(OperationLog.created_at)).where(
+        OperationLog.action == action,
+        OperationLog.created_at >= since,
+    )
+    if result:
+        stmt = stmt.where(OperationLog.result == result)
+    # 用 `is_(None)` 而不是 `== None` 的显式分支：`ip` 为 NULL 时也要归到同一个桶，
+    # 否则「取不到客户端 IP」的链路（如内部调用）会完全绕过限流。
+    stmt = stmt.where(OperationLog.ip.is_(None) if ip is None else OperationLog.ip == ip)
+    n, oldest = db.execute(stmt).one()
+    return int(n or 0), oldest
 
 
 def count_by_action(db: Session, *, since: str | None = None) -> dict[str, int]:

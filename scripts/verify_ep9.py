@@ -102,6 +102,7 @@ CHAIN: list[tuple[str, str, str]] = [
     ("verify_doc_sql.py", "文档内嵌 SQL 与 DDL 一致", "文档"),
     # ---- 认证（API-01~05）
     ("verify_auth.py", "认证与会话：Token 生命周期 / 越权 / 改密撤回", "API"),
+    ("verify_register_rate.py", "R-07 注册限流：放行区 / 超限 / 先于 bcrypt 拒绝", "API"),
     # ---- 逐阶段静态守卫
     ("verify_ep3.py", "EP-3 前台首页与全局框架", "静态"),
     ("verify_ep4.py", "EP-4 数据集上传（含注册顺序守卫）", "静态"),

@@ -101,6 +101,13 @@ class Settings:
     jwt_expire_minutes: int
     login_max_fail: int
     login_lock_seconds: int
+    # ---- 注册限流（`R-07`，2026-10-26）------------------------------------
+    # 公开部署后 `/auth/register` 是**唯一不需要任何凭证**的写入口，
+    # 不限流就能被脚本批量注册刷库；且 `register()` 里 bcrypt 在入库前执行，
+    # 连「邮箱已存在」的失败请求都要付一次 ~250 ms 的哈希成本（CPU DoS）。
+    register_max_attempts: int
+    register_max_success: int
+    register_window_seconds: int
     max_file_size_mb: int
     max_rows: int
     max_series: int
@@ -132,6 +139,12 @@ class Settings:
             jwt_expire_minutes=_get_int("JWT_EXPIRE_MINUTES", 720),
             login_max_fail=_get_int("LOGIN_MAX_FAIL", 3),
             login_lock_seconds=_get_int("LOGIN_LOCK_SECONDS", 60),
+            # 30 次尝试 / 小时 / IP：正常用户注册 1 次，`verify_auth` 一轮约 10 次，
+            # 都留有余量；对脚本刷库与「每次请求烧一次 bcrypt」的 CPU 消耗足够致命。
+            register_max_attempts=_get_int("REGISTER_MAX_ATTEMPTS", 30),
+            # 10 个**成功**注册 / 小时 / IP，计数落 `operation_logs` ⇒ 重启不清零。
+            register_max_success=_get_int("REGISTER_MAX_SUCCESS", 10),
+            register_window_seconds=_get_int("REGISTER_WINDOW_SECONDS", 3600),
             max_file_size_mb=_get_int("MAX_FILE_SIZE_MB", 20),
             max_rows=_get_int("MAX_ROWS", 500_000),
             max_series=_get_int("MAX_SERIES", 1000),

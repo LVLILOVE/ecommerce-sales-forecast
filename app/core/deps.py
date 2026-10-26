@@ -45,7 +45,7 @@ from app.core import security
 from app.core import config
 from app.core.db import SessionLocal
 from app.core.errors import BizError, ErrorCode
-from app.dao import user_dao
+from app.dao import token_dao, user_dao
 from app.models.user import GUEST_USER_ID, ROLE_ADMIN, User
 
 logger = logging.getLogger(__name__)
@@ -147,6 +147,14 @@ def get_auth_context(
         raise BizError(ErrorCode.UNAUTHORIZED, "请先登录后再执行此操作")
     payload = security.decode_access_token(token)
 
+    # 🔒 登出判定（`R-03`）：黑名单在库里，`security` 层不持有 Session，
+    #    所以「这个 jti 是否已撤销」在这里查。归入 40102 而不是新码：
+    #    前端只需要「清 Token → 跳登录」这一条路径。
+    jti = payload.get("jti")
+    if jti and token_dao.is_revoked(db, jti):
+        logger.info("token rejected: revoked jti=%s", jti)
+        raise BizError(ErrorCode.TOKEN_EXPIRED, "该登录已退出，请重新登录")
+
     user = user_dao.get_by_id(db, security.payload_user_id(payload))
     if user is None:
         raise BizError(ErrorCode.TOKEN_EXPIRED, "登录状态已失效，请重新登录")
@@ -231,6 +239,11 @@ def get_optional_user(
         return _guest_fallback()
     try:
         payload = security.decode_access_token(token)
+        # 🔒 已登出的 Token 也要降级成游客（`R-03`）：否则「登出后仍能以原身份
+        #    上传」会绕过 FR-USR-05。降级而非抛错，与其它无效 Token 的处理一致。
+        jti = payload.get("jti")
+        if jti and token_dao.is_revoked(db, jti):
+            raise BizError(ErrorCode.TOKEN_EXPIRED, "该登录已退出")
     except BizError:
         # ⚠️ 这里「吞掉」40102 是刻意的降级，但必须留日志：
         #    否则「Token 有问题」这件事在生产环境完全不可观测。

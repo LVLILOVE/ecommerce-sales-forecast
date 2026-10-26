@@ -26,21 +26,19 @@
    本项目采用**双机制**：
      - `token_version`（落在 `users` 表，`TQ-1` 方案 C）：改密时 +1，
        使该用户**全部**历史 Token 的 `ver` 与库不符 → 全部失效（主机制）；
-     - `jti` 黑名单（本模块内存）：登出时把单个 Token 的 `jti` 拉黑，
-       使**当前这一个** Token 立即失效（`FR-USR-05`）。
+     - `jti` 黑名单（`revoked_tokens` 表，`DB-T09`）：登出时把单个 Token 的
+       `jti` 拉黑，使**当前这一个** Token 立即失效（`FR-USR-05`）。
    二者不可互相替代：黑名单管「单个 Token 主动登出」，版本号管「一次改密全撤」。
 
-⚠️ 黑名单是**进程内存**实现（`BE-19` 方案 B），单进程部署下有效。
-   若后续改为多进程 / 多实例（gunicorn -w N），必须迁到 Redis 或数据库，
-   否则「在 A 进程登出、拿旧 Token 打 B 进程」会绕过黑名单。
-   `verify_auth.py` 的 `T-Q12` 断言会显式记录这一局限。
+⚠️ 黑名单**不在本模块实现**（`R-03`，2026-10-26 已迁库）。
+   本文件只做无状态的密码 / JWT 原语；「这个 jti 是否已撤销」由
+   `deps.get_auth_context()` 用 `token_dao.is_revoked()` 判定。
+   历史教训：内存版在多 worker / 重启后会静默失效，不要改回去。
 =============================================================================
 """
 from __future__ import annotations
 
 import logging
-import threading
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -66,54 +64,19 @@ JWT_ISSUER = "sales-forecast-api"
 """签发者标识，写进 `iss` 声明并在校验时比对，避免与其他系统共用密钥时串号。"""
 
 # ---------------------------------------------------------------------------
-# Token 黑名单（`BE-19` 方案 B：登出用）
+# ⚠️ Token 黑名单**不在本模块**
 # ---------------------------------------------------------------------------
-_LOCK = threading.Lock()
-_REVOKED: dict[str, int] = {}
-"""`jti -> exp`（Unix 秒）。按 exp 过期即删，不需要额外的清理线程。"""
-
-
-def _now_ts() -> int:
-    return int(time.time())
-
-
-def _purge_expired(now: int) -> None:
-    """清掉已自然过期的黑名单项（调用方须持锁）。"""
-    for jti in [k for k, exp in _REVOKED.items() if exp <= now]:
-        _REVOKED.pop(jti, None)
-
-
-def revoke_token(jti: str, exp: int) -> None:
-    """把某个 Token 加入黑名单（登出，`FR-USR-05`）。
-
-    :param exp: Token 的原过期时间。到期后该项自动失效，
-                因此黑名单的常驻规模上限 = 「同时段内登出的 Token 数」。
-    """
-    with _LOCK:
-        now = _now_ts()
-        _purge_expired(now)
-        _REVOKED[jti] = int(exp)
-    logger.info("token revoked jti=%s", jti)
-
-
-def is_token_revoked(jti: str) -> bool:
-    """该 jti 是否已被登出拉黑。"""
-    with _LOCK:
-        now = _now_ts()
-        _purge_expired(now)
-        return jti in _REVOKED
-
-
-def revoked_count() -> int:
-    """当前黑名单条目数（自检与排障用）。"""
-    with _LOCK:
-        return len(_REVOKED)
-
-
-def clear_revoked() -> None:
-    """清空黑名单（**仅供测试**，生产路径不得调用）。"""
-    with _LOCK:
-        _REVOKED.clear()
+# `R-03`（2026-10-26）：黑名单已从「进程内存字典」迁到数据库表
+# `revoked_tokens`（见 `app/models/revoked_token.py` + `app/dao/token_dao.py`）。
+#
+# 🔒 **不要再往本模块加回内存实现。** 内存版有两个静默失效的场景：
+#   ① 进程重启 → 已登出的 Token 又恢复可用（直到 exp 自然过期）；
+#   ② 多 worker → A 进程登出，旧 Token 打 B 进程照样放行。
+# 二者都不报错，只是让「登出」不可靠。
+#
+# 分层上也更干净了：本模块只做「密码哈希 + JWT 编解码」这类**无状态**原语，
+# 「这个 jti 是否已撤销」是**持久化状态**，归属 `deps.get_auth_context()` 判定
+# （见那里的注释）。
 
 
 # ---------------------------------------------------------------------------
@@ -213,13 +176,19 @@ def create_access_token(user_id: int, token_version: int) -> tuple[str, int]:
 
 
 def decode_access_token(token: str) -> dict:
-    """校验并解出 Token 载荷。
+    """校验并解出 Token 载荷（**只做无状态校验**）。
 
     🔒 所有失败路径统一抛 `40102 TOKEN_EXPIRED`（真实 HTTP 401），**不区分**
        「签名错 / 过期 / 格式坏」——区分开来等于给攻击者提供调试信息。
-       唯一例外是已登出（黑名单命中），同样归入 40102，但日志会标注，
-       便于排障时区分「真过期」与「已登出」。
+
+    🔒 本函数**不检查** `jti` 是否已登出（`R-03` 之后）。原因：
+       黑名单在数据库里，而本模块按设计不持有 `Session`。
+       登出判定的位置是 `deps.get_auth_context()` / `deps.get_optional_user_id()`，
+       它们手上有 `db`，在拿到 payload 之后紧接着查 `token_dao.is_revoked()`。
+       ⇒ 任何**绕过 deps 直接调用本函数**的新代码，都不会自动获得登出保护。
+       这是刻意的分层代价：无状态原语不做持久化查询，避免 security 依赖 SQLAlchemy。
     """
+
     try:
         payload = jwt.decode(
             token,
@@ -234,11 +203,6 @@ def decode_access_token(token: str) -> dict:
     except jwt.InvalidTokenError as exc:
         logger.info("token rejected: invalid (%s)", type(exc).__name__)
         raise BizError(ErrorCode.TOKEN_EXPIRED, "登录状态无效，请重新登录") from None
-
-    jti = payload.get("jti")
-    if jti and is_token_revoked(jti):
-        logger.info("token rejected: revoked jti=%s", jti)
-        raise BizError(ErrorCode.TOKEN_EXPIRED, "该登录已退出，请重新登录")
 
     return payload
 
