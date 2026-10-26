@@ -49,6 +49,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.core.deps import CurrentUser, DbSession, OptionalUserId
@@ -266,21 +267,25 @@ async def prediction_export(
        各浏览器下都不会乱码；同时保留 ASCII 兜底 `filename="..."`，
        供不认识 `filename*` 的老客户端兜底（它会退化成 `task_42_export.csv`，
        而不是拿到一个乱码名或直接 404）。
+
+    🔒 **流式返回**（2026-10-26 修复）：不再把整份内容读进内存再 `Response(content=)`，
+       而是交给 `StreamingResponse` 消费生成器 —— 上限 300 万行时内存恒定。
+       因此**不设 `Content-Length`**（长度在生成完毕前未知），由 chunked 传输，
+       `Content-Disposition` 依然足以触发浏览器下载。
     """
-    content, name, mime = await run_in_threadpool(
-        result_service.export_result, db, task_id, user_id=user.id, fmt=q.format
+    spec = await run_in_threadpool(
+        result_service.prepare_export, db, task_id, user_id=user.id, fmt=q.format
     )
-    ascii_fallback = f"task_{task_id}_export.{name.rsplit('.', 1)[-1]}"
-    quoted = quote(name, safe="")
-    return Response(
-        content=content,
-        media_type=mime,
+    ascii_fallback = f"task_{task_id}_export.{spec.suffix}"
+    quoted = quote(spec.name, safe="")
+    return StreamingResponse(
+        result_service.iter_export_chunks(spec),
+        media_type=spec.mime,
         headers={
             "Content-Disposition": (
                 f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quoted}"
             ),
             # 🔒 导出含明细数据，禁止任何中间层缓存
             "Cache-Control": "no-store",
-            "Content-Length": str(len(content)),
         },
     )

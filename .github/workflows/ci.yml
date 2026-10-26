@@ -9,13 +9,15 @@ on:
 
 # 说明
 # ---------------------------------------------------------------------------
-# 这里只跑「不依赖模型权重与数据库」的检查，因此可以在干净 runner 上秒级完成：
-#   · 前端：类型检查（tsc --noEmit）→ ESLint（--max-warnings 0）→ 生产构建
-#   · 后端：全量语法编译（py_compile / compileall，不需要安装 torch 等重依赖）
+# 这里只跑「不依赖模型权重与数据库」的检查，因此可以在干净 runner 上完成：
+#   · 前端：类型检查（tsc --noEmit）→ ESLint（--max-warnings 0）→ 生产构建 → vitest
+#   · 后端：全量语法编译（compileall）+ ruff 静态检查 + pytest（tests/ 纯函数）
 #
-# 完整质量保障在 `scripts/` 下的 38 套断言脚本里，它们需要
-# `outputs/models/lstm_v1.pt` 与初始化后的 SQLite 库（均不入库），
-# 属于本地/交付前回归，不放在此 workflow。
+# 分工（刻意如此，别混）：
+#   · `tests/`（pytest + vitest）= 纯函数与不变量，毫秒级、零外部状态、进 CI
+#   · `scripts/verify_*` 38 套   = 端到端与契约，需要 `outputs/models/lstm_v1.pt`
+#                                  与初始化后的 SQLite（均不入库）⇒ 交付前本地回归，不进 CI
+#   硬把后者塞进 CI 只会得到「永久红」或「永久 skip」，两者都比不跑更糟。
 
 jobs:
   frontend:
@@ -70,6 +72,44 @@ jobs:
           grep -c 'CREATE TABLE' code/db/schema.sql
           grep -q 'users' code/db/schema.sql
           echo "schema.sql OK"
+
+  unit:
+    name: 单元测试（ruff · pytest · vitest）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # 🔒 不装 torch：`tests/` 只覆盖纯函数与不变量，导入链不触碰算法层
+      #    （实测 `import app.services.result_service` 不会加载 torch）。
+      #    装 torch 会让这一步从 30 s 变成 5 min，收益为零。
+      - name: 安装测试依赖
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+
+      - name: ruff（静态检查）
+        run: ruff check app tests
+
+      - name: pytest（纯函数 / 不变量）
+        run: pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 前端单测（vitest）
+        working-directory: web
+        run: |
+          npm ci
+          npm run test
 
   hygiene:
     name: 仓库卫生（密钥与产物不入库）

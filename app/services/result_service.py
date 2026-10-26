@@ -44,13 +44,16 @@ import io
 import json
 import logging
 import math
+import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.db import EXPORT_TMP_DIR, SessionLocal
 from app.core.deps import GUEST_USER_ID
 from app.core.errors import BizError, ErrorCode
 from app.dao import dataset_dao, metric_dao, prediction_dao, task_dao
@@ -62,7 +65,9 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "get_result",
     "list_detail",
-    "export_result",
+    "prepare_export",
+    "iter_export_chunks",
+    "ExportSpec",
     "EXPORT_HEADER",
     "EXPORT_FILENAME_PREFIX",
 ]
@@ -604,74 +609,167 @@ def _detail_row(p: Any) -> dict[str, Any]:
 # =============================================================================
 # `API-16` 导出
 # =============================================================================
-def export_result(
+# =============================================================================
+# 导出（`API-16` / `FR-VIS-05`）
+# -----------------------------------------------------------------------------
+# 🔒 **流式**：本模块唯一一处「内存占用不随数据量增长」的实现。
+#
+#    2026-10-26 修复的历史缺陷：`iter_all_for_export` 早已在 DAO 层用
+#    `yield_per=2000` 分批取数，但本层用 `io.StringIO` 把全部行收口后
+#    再 `.encode()`，接口层又 `Response(content=...)` 整体驻留 ⇒
+#    上限 300 万行时峰值约 360 MB/次，**DAO 的流式被完全抵消**，
+#    与 `prediction_dao.iter_all_for_export` 自身 docstring 的说法矛盾。
+#    现在改为「生成器逐批产出 bytes + `StreamingResponse`」。
+#
+# 🔒 **生成器必须自己开会话**：FastAPI 0.106+ 在发送 `StreamingResponse`
+#    之前就会退出 `yield` 依赖，复用请求会话会拿到已关闭的连接。
+#    所以 `iter_export_chunks()` 只接收 `task_id`，不接收 `Session`。
+#
+# 🔒 **留档路径必须走 `settings.export_dir`**：原实现硬编码
+#    `base_dir / "data" / "exports"`，导致 `verify_*` 脚本设置的
+#    `EXPORT_DIR` 隔离对本项失效（只因演示数据行数达不到 5 MB 落盘阈值
+#    才一直没暴露）。
+# =============================================================================
+
+EXPORT_CHUNK_ROWS = 2000            # 每批写出的行数（与 DAO 的 yield_per 对齐）
+_XLSX_STREAM_CHUNK = 64 * 1024      # xlsx 回放的分块大小（64 KB）
+
+# CSV 注入防护：以这些字符开头的**文本**单元格会被 Excel 当公式执行（DDE）。
+#   只作用于用户可控的文本列（`sku_id` / `warehouse_id`）；
+#   数值列绝不能加前缀，否则 `-12` 会变成 `'-12` 破坏类型。
+_CSV_UNSAFE_PREFIX = ("=", "+", "-", "@", "\t", "\r")
+
+
+@dataclass(frozen=True)
+class ExportSpec:
+    """导出**描述**（不含内容）。内容由 `iter_export_chunks()` 按需产出。"""
+
+    fmt: str
+    name: str
+    mime: str
+    task_id: int | None = None          # csv：流式读源
+    xlsx_path: Path | None = None       # xlsx：已落盘，待回放
+    dump: bool = False                  # 是否保留留档（`API-16-2`）
+
+    @property
+    def suffix(self) -> str:
+        return self.name.rsplit(".", 1)[-1]
+
+
+def prepare_export(
     db: Session,
     task_id: int,
     *,
     user_id: int,
     fmt: str = "csv",
-) -> tuple[bytes, str, str]:
-    """导出结果，返回 `(内容, 文件名, MIME)`。
+) -> ExportSpec:
+    """校验归属与任务状态，返回导出描述（**不生成内容**）。
 
     🔒 **导出要求登录**（`FR-USR-08` / `JT-10`）：游客能看结果页，
        但不能把数据带走。调用方必须用 `CurrentUser` 而非 `OptionalUserId`。
-
-    🔒 **列序固定**（`UX-P08-08`），且与库表列名不同 —— 见 `EXPORT_HEADER` 注释。
+    🔒 **列序固定**（`UX-P08-08`），见 `EXPORT_HEADER` 注释。
     """
     task = _owned_task(db, task_id, user_id)
     _require_succeeded(task)
 
-    # 预估体积：命中阈值才落盘，否则直接流式返回（`API-16-2`）
+    # 预估体积：命中阈值才落盘留档，否则只走流式（`API-16-2` / `NFR-REL-05`）
     total_rows = prediction_dao.count_by_task(db, task_id)
     dump = total_rows * 160 >= EXPORT_DUMP_THRESHOLD_BYTES
+    name = f"{EXPORT_FILENAME_PREFIX}_{task_id}_{datetime.now():%Y%m%d%H%M%S}.{fmt}"
 
     if fmt == "xlsx":
-        content = _build_xlsx(db, task_id)
-        mime = (
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
+        path = _write_xlsx_to_disk(db, task_id, name if dump else None)
+        return ExportSpec(
+            fmt="xlsx",
+            name=name,
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            xlsx_path=path,
+            dump=dump,
         )
-        suffix = "xlsx"
-    else:
-        content = _build_csv(db, task_id)
-        mime = "text/csv; charset=utf-8"
-        suffix = "csv"
 
-    name = f"{EXPORT_FILENAME_PREFIX}_{task_id}_{datetime.now():%Y%m%d%H%M%S}.{suffix}"
-    if dump:
-        _persist_export(name, content)
-    return content, name, mime
+    return ExportSpec(
+        fmt="csv",
+        name=name,
+        mime="text/csv; charset=utf-8",
+        task_id=task_id,
+        dump=dump,
+    )
 
 
-def _build_csv(db: Session, task_id: int) -> bytes:
-    """生成 CSV 字节流。
+def iter_export_chunks(spec: ExportSpec) -> Iterator[bytes]:
+    """按块产出导出内容（供 `StreamingResponse` 消费）。"""
+    if spec.fmt == "xlsx":
+        assert spec.xlsx_path is not None
+        yield from _file_chunks(spec.xlsx_path, delete=not spec.dump)
+        return
+    assert spec.task_id is not None
+    yield from _iter_csv_chunks(spec.task_id, dump=spec.dump, name=spec.name)
 
-    🔒 **必须带 UTF-8 BOM**（`API-16-1` / `NFR-COMP-05`）。
-       不带 BOM 时 Excel 双击打开中文列（仓库名全是中文）会乱码，
-       这是国内用户环境的**必现**问题，不是「个别用户配置问题」。
-       BOM 写作 `\ufeff` 三个字节，用 `utf-8-sig` 编码一次性产出。
+
+def _iter_csv_chunks(task_id: int, *, dump: bool, name: str) -> Iterator[bytes]:
+    """逐批产出 CSV 字节。
+
+    内存占用 ≈ `EXPORT_CHUNK_ROWS` 行，**与总行数无关** —— 这是本函数存在的理由。
     """
+    dump_fh = _open_dump(name) if dump else None
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
-    writer.writerow(EXPORT_HEADER)
-    for row in prediction_dao.iter_all_for_export(db, task_id):
-        writer.writerow(_export_cells(row))
-    return buf.getvalue().encode("utf-8-sig")
+
+    def _flush() -> bytes:
+        chunk = buf.getvalue().encode("utf-8")
+        buf.seek(0)
+        buf.truncate(0)
+        if dump_fh is not None:
+            dump_fh.write(chunk)
+        return chunk
+
+    try:
+        # 🔒 BOM 必须最先发出：不带 BOM 时 Excel 双击打开中文列必乱码（`API-16-1`）
+        bom = "\ufeff".encode("utf-8")
+        if dump_fh is not None:
+            dump_fh.write(bom)
+        yield bom
+
+        writer.writerow(EXPORT_HEADER)
+        # 见本节说明：不能复用请求的 Session
+        with SessionLocal() as own_db:
+            for i, row in enumerate(
+                prediction_dao.iter_all_for_export(own_db, task_id), 1
+            ):
+                writer.writerow(_export_cells(row))
+                if i % EXPORT_CHUNK_ROWS == 0:
+                    yield _flush()
+        if buf.tell():
+            yield _flush()
+    finally:
+        if dump_fh is not None:
+            try:
+                dump_fh.close()
+            except OSError:  # pragma: no cover - 关闭失败无需影响下载
+                logger.warning("导出留档文件关闭失败", exc_info=True)
 
 
 def _export_cells(p: Any) -> list[str]:
-    """导出单元格。
+    """导出一行的单元格。
 
     🔒 `actual_sales` / `error` 无真值时写**空字符串**，不写 0（`API-16`）。
+
     🔒 `error` 用库里的 `predicted_value` 与 `actual_value` 现算 —— 这是
        **恒等式**（`|y - ŷ|`），不是模型指标，故不违反「不重算指标」纪律；
        若真值为空则留空。
+
+    🔒 **文本列做 CSV 注入转义**：`sku_id` / `warehouse_id` 来自用户上传的
+       CSV，若以 `= + - @ Tab CR` 开头，Excel 打开导出文件时会当公式执行
+       （DDE / CSV Injection）。加 `'` 前缀即可降级为纯文本。
     """
     actual = p.actual_value
     err = "" if actual is None else f"{abs(float(actual) - float(p.predicted_value)):.2f}"
     return [
-        p.sku_id,
-        p.warehouse_id,
+        _csv_text(p.sku_id),
+        _csv_text(p.warehouse_id),
         p.forecast_date,
         f"{float(p.predicted_value):.2f}",
         p.granularity_level,
@@ -680,12 +778,20 @@ def _export_cells(p: Any) -> list[str]:
     ]
 
 
-def _build_xlsx(db: Session, task_id: int) -> bytes:
-    """生成 xlsx（`FR-VIS-05` 双格式）。
+def _csv_text(value: Any) -> str:
+    """文本单元格的 CSV 注入防护（见 `_CSV_UNSAFE_PREFIX`）。"""
+    text = "" if value is None else str(value)
+    return f"'{text}" if text[:1] in _CSV_UNSAFE_PREFIX else text
 
-    ⚠️ 优先用 `openpyxl`；未安装则**降级为 CSV 内容 + xlsx 扩展名是错的**
-       （Excel 会拒绝打开），故此处明确抛错由上层转成 CSV 提示，
-       绝不用「改个后缀名糊弄过去」的做法。
+
+def _write_xlsx_to_disk(db: Session, task_id: int, keep_name: str | None) -> Path:
+    """生成 xlsx 并落盘，返回路径。
+
+    `write_only=True` + `save(路径)` 让 openpyxl 直接流进 zip，
+    不在内存里保留整张表 —— 这是 xlsx 分支也能撑住大数据量的原因。
+
+    ⚠️ 优先用 `openpyxl`；未安装则**明确抛错**由上层转成可读提示。
+       绝不用「CSV 内容 + xlsx 扩展名」糊弄（Excel 会拒绝打开）。
     """
     try:
         from openpyxl import Workbook
@@ -697,31 +803,52 @@ def _build_xlsx(db: Session, task_id: int) -> bytes:
             {"format": "xlsx"},
         ) from exc
 
+    if keep_name is None:
+        target_dir = EXPORT_TMP_DIR
+        path = target_dir / f".xlsx-{uuid.uuid4().hex}.xlsx"
+    else:
+        target_dir = settings.export_dir
+        path = target_dir / keep_name
+    target_dir.mkdir(parents=True, exist_ok=True)
+
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("预测结果")
     ws.append(list(EXPORT_HEADER))
     for row in prediction_dao.iter_all_for_export(db, task_id):
         ws.append(_export_cells(row))
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    wb.save(path)
+    return path
 
 
-def _persist_export(name: str, content: bytes) -> Path | None:
-    """落盘到 `data/exports/` 供 7 天 TTL 清理（`API-16-2` / `FR-SYS-08`）。
+def _open_dump(name: str) -> Any | None:
+    """打开留档文件。
 
     ⚠️ 落盘失败只告警不抛：导出内容已经生成好了，为一个「留档」功能
        让整次导出失败是本末倒置。
     """
     try:
-        out_dir = settings.base_dir / "data" / "exports"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / name
-        path.write_bytes(content)
-        return path
+        settings.export_dir.mkdir(parents=True, exist_ok=True)
+        return (settings.export_dir / name).open("wb")
     except OSError:  # pragma: no cover - 磁盘异常
         logger.warning("导出文件落盘失败（不影响本次下载）", exc_info=True)
         return None
+
+
+def _file_chunks(path: Path, *, delete: bool) -> Iterator[bytes]:
+    """回放一个已落盘文件；`delete=True` 时读毕（或客户端中断）即删。"""
+    try:
+        with path.open("rb") as fh:
+            while True:
+                chunk = fh.read(_XLSX_STREAM_CHUNK)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        if delete:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover
+                logger.warning("临时导出文件删除失败：%s", path, exc_info=True)
 
 
 # =============================================================================

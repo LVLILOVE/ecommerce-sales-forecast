@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sales-forecast"
+version = "1.0.0"
+description = "LSTM 电商销量预测 Web 应用（FastAPI + React）"
+requires-python = ">=3.12"
+# 运行期依赖仍以 requirements.txt 为真源（部署与服务端安装都读它）；
+# 这里只声明打包元信息，避免出现第二份依赖清单。
+dynamic = ["dependencies"]
+
+# =============================================================================
+# pytest
+# -----------------------------------------------------------------------------
+# 🔒 `tests/` 下只放**纯函数 / 纯不变量**用例：不碰真实数据库、不加载模型。
+#    端到端与契约验证仍在 `scripts/verify_*.py`（需要种子库与 lstm_v1.pt），
+#    两者分工明确，不互相替代。
+# =============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:app.*"]
+
+# =============================================================================
+# ruff
+# -----------------------------------------------------------------------------
+# 起步只开「几乎不会误报」的规则：语法级错误 + 未定义名 + 重复定义 + 未用导入。
+# 刻意**不开** E501（行宽）与 D（docstring）：本项目的注释密度高、中文注释
+# 行宽不适合硬约束，先保证「真错误」零容忍，再逐步加规则。
+# =============================================================================
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82", "F811", "F401"]
+
+[tool.ruff.lint.per-file-ignores]
+# 校验脚本大量使用「先 import 再设 env」的模式，未用导入多为有意保留
+"scripts/*" = ["F401", "E402"]

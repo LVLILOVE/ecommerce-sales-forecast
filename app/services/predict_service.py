@@ -69,10 +69,10 @@ from sqlalchemy.orm import Session
 from app.algo import config as algo_config
 from app.core import config
 from app.core.errors import BizError, ErrorCode
-from app.core.model_holder import ModelHandle, assert_ready, holder
+from app.core.model_holder import ModelHandle, assert_ready
 from app.dao import metric_dao, oplog_dao, prediction_dao, task_dao
 from app.models.operation_log import ACTION_PREDICT, RESULT_FAIL, RESULT_SUCCESS
-from app.models.task import STATUS_FAILED, STATUS_RUNNING, STATUS_SUCCEEDED
+from app.models.task import STATUS_FAILED, STATUS_SUCCEEDED
 from app.services import dataset_service
 
 logger = logging.getLogger(__name__)

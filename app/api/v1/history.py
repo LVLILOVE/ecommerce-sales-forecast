@@ -30,7 +30,6 @@ from app.schemas import (
     CompareRequest,
     CompareResponse,
     HistoryPage,
-    HistoryQuery,
     PredictionResultResponse,
     WorkbenchSummary,
 )
