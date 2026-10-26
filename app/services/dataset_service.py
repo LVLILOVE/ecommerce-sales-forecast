@@ -61,11 +61,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import math
-import re
 import uuid
-import warnings
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -85,6 +81,20 @@ from app.models.dataset import STATUS_ACTIVE, STATUS_INVALID, Dataset
 from app.models.operation_log import ACTION_UPLOAD, RESULT_FAIL, RESULT_SUCCESS
 from app.models.user import GUEST_USER_ID
 from app.services import cost_model
+from app.validators import (
+    ALLOWED_SUFFIX,
+    MAX_ERROR_ROWS_EXPORT,
+    MAX_ERROR_ROWS_RETURNED,
+    MAX_GAP_RANGES_RETURNED,
+    PREVIEW_ROWS,
+    Inspection,
+    build_preview,
+    check_extension,
+    inspect_file,
+    load_csv,
+    parse_dates,
+    fmt_num,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +138,10 @@ __all__ = [
 VALIDATE_ORDER: tuple[str, ...] = algo_config.VALIDATE_ORDER
 REQUIRED_COLUMNS: tuple[str, ...] = algo_config.REQUIRED_COLUMNS
 
-ALLOWED_SUFFIX = ".csv"
+# 校验相关阈值与提示文案的唯一真源在 `app/validators/constants.py`（`R-06` 拆包后），
+# 这里**只 import 不重定义** —— 否则又会出现「两套数字」。
+# 仍留在本模块的只有「非校验」的常量（上传分块、预算预警、模板行数）。
 UPLOAD_CHUNK_BYTES = 1 << 20          # 1 MiB：流式落盘的块大小（FR-UPL-04）
-MAX_GAP_RANGES_RETURNED = 50          # 响应里最多回传的断档区间数（避免大文件把响应撑爆）
-MAX_ERROR_ROWS_RETURNED = 20          # FR-UPL-10：响应中最多列前 20 条
-MAX_ERROR_ROWS_EXPORT = 500_000       # 错误明细 CSV 的行数上限（= MAX_ROWS，实务上等于全部）
-PREVIEW_ROWS = 20                     # FR-UPL-07：预览前 20 行
 OVER_BUDGET_SERIES = 800              # API-09：序列数 > 800 置 over_budget_risk
 TEMPLATE_SAMPLE_ROWS = 2              # FR-UPL-08：模板 = 表头 + 2 行示例
 
@@ -149,41 +157,6 @@ TEMPLATE_CSV_BODY = (
     "item_0001,上海仓,2015-01-01,120\r\n"
     "item_0001,上海仓,2015-01-02,135\r\n"
 )
-
-_CJK = re.compile(r"[\u4e00-\u9fff]")
-
-
-# =============================================================================
-# 数据结构
-# =============================================================================
-@dataclass
-class Issue:
-    """一次校验失败的完整描述（错误码 + 阶段 + 定位载荷）。"""
-
-    code: int
-    fail_stage: str
-    message: str
-    data: dict[str, Any] = field(default_factory=dict)
-    # 写「错误明细 CSV」用；为空表示该错误没有行级明细（如缺列）
-    error_rows: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class Inspection:
-    """一次文件巡检的结果。`issue` 非空即失败（按 VALIDATE_ORDER 的第一个失败项）。"""
-
-    issue: Issue | None = None
-    stats: dict[str, Any] = field(default_factory=dict)
-    preview: dict[str, Any] = field(default_factory=dict)
-    gap_ranges: list[dict[str, Any]] = field(default_factory=list)
-    gap_count: int = 0
-    gap_days_total: int = 0
-    error_columns: list[str] = field(default_factory=list)
-
-    @property
-    def ok(self) -> bool:
-        return self.issue is None
-
 
 # =============================================================================
 # 路径与命名（WS-4-01 / NFR-SEC-07）
@@ -234,499 +207,6 @@ def _safe_unlink(p: Path) -> bool:
 # 公开别名：HTTP 层（`api/v1/datasets.py`）在流式中断时也要清理半成品，
 # 但下划线名不应跨模块引用，故显式导出一个同语义的公开名。
 safe_unlink = _safe_unlink
-
-
-# =============================================================================
-# 第 1 步：扩展名（落盘前即拒 → 不建行）
-# =============================================================================
-def check_extension(original_name: str | None) -> None:
-    """`FR-UPL-01`：扩展名须为 `.csv`，否则 `40009`、落盘前拒绝。"""
-    name = (original_name or "").strip()
-    if not name:
-        raise BizError(
-            ErrorCode.BAD_EXTENSION,
-            "未获取到文件名，无法判断文件类型",
-            {"fail_stage": VALIDATE_ORDER[0], "suggestion": "请重新选择文件后再上传"},
-        )
-    if not name.lower().endswith(ALLOWED_SUFFIX):
-        suffix = Path(name).suffix or "（无扩展名）"
-        raise BizError(
-            ErrorCode.BAD_EXTENSION,
-            f"不支持的文件类型：{suffix}，仅支持 .csv 文件",
-            {
-                "fail_stage": VALIDATE_ORDER[0],
-                "suggestion": "请在 Excel / 表格软件中「另存为 CSV（逗号分隔）」后重新上传",
-            },
-        )
-
-
-# =============================================================================
-# 读取辅助
-# =============================================================================
-def _detect_encoding(path: Path) -> str:
-    """探测编码：优先 UTF-8（含 BOM），回退 GB18030（国内 Excel 另存常见）。
-
-    ⚠️ 只探测文件头 64 KB。GB18030 能解码绝大多数字节序列，因此**必须**
-       先试 UTF-8，否则中文文件会被误判成 GB18030 而出现乱码式「解析成功」。
-    """
-    head = path.open("rb").read(1 << 16)
-    for enc in ("utf-8-sig", "gb18030"):
-        try:
-            head.decode(enc)
-            return enc
-        except UnicodeDecodeError:
-            continue
-    return "utf-8-sig"
-
-
-def _count_data_rows(path: Path) -> int:
-    """快速统计数据行数（不含表头）。
-
-    用二进制块计数而不是 `pd.read_csv` —— 第 2 步的目的是「越靠前越快失败」，
-    没必要为了一次行数检查把 20 MB 全部解析成 DataFrame。
-    """
-    newlines = 0
-    tail = b""
-    with path.open("rb") as fh:
-        while True:
-            block = fh.read(1 << 20)
-            if not block:
-                break
-            newlines += block.count(b"\n")
-            tail = block[-1:]
-    lines = newlines if tail in (b"", b"\n") else newlines + 1
-    return max(lines - 1, 0)
-
-
-def _load_csv(path: Path, encoding: str | None = None) -> tuple[pd.DataFrame, str]:
-    """整表读入（`dtype=str` + `keep_default_na=False`，保留原始字面值）。
-
-    🔒 全列保留：`FR-UPL-06` 要求错误明细「保留原始列」，故不能只读必需 4 列。
-    """
-    enc = encoding or _detect_encoding(path)
-    kwargs: dict[str, Any] = {
-        "dtype": str,
-        "keep_default_na": False,
-        "encoding": enc,
-        "skipinitialspace": True,
-    }
-    try:
-        return pd.read_csv(path, **kwargs), enc
-    except UnicodeDecodeError:
-        # 文件头是纯 ASCII、正文却是 GB 系编码时的兜底
-        if enc == "utf-8-sig":
-            kwargs["encoding"] = "gb18030"
-            return pd.read_csv(path, **kwargs), "gb18030"
-        raise
-
-
-def _read_header(path: Path, encoding: str) -> list[str]:
-    """只读表头（`nrows=0`），列名去 BOM 与首尾空白。"""
-    df = pd.read_csv(
-        path, nrows=0, dtype=str, encoding=encoding, skipinitialspace=True
-    )
-    return [str(c).strip().lstrip("\ufeff") for c in df.columns]
-
-
-def _parse_dates(series: pd.Series) -> pd.Series:
-    """日期解析：先按推荐的 `YYYY-MM-DD`，再对剩余项做宽松解析。
-
-    PRD §3.2.2 的约束是「**可解析**，推荐 `YYYY-MM-DD`」，因此
-    `2015/1/7`、`20151010` 这类写法**应当放行**；只有真正无法解析的值
-    （`2015/13/45`、`未知`、空串）才计入 `unparsable_rows`。
-    """
-    strict = pd.to_datetime(series, format="%Y-%m-%d", errors="coerce")
-    bad = strict.isna()
-    if bad.any():
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            loose = pd.to_datetime(
-                series[bad].astype(str).str.strip(), format="mixed", errors="coerce"
-            )
-        strict = strict.copy()
-        strict.loc[bad] = loose
-    return strict
-
-
-def _to_number(raw: Any) -> Any:
-    """把原始字面值转成「预览用」的数值：整数优先，其次浮点，失败则原样返回。"""
-    text = str(raw).strip()
-    if text == "":
-        return ""
-    try:
-        return int(text)
-    except ValueError:
-        pass
-    try:
-        value = float(text)
-    except ValueError:
-        return raw
-    return int(value) if float(value).is_integer() else value
-
-
-def _fmt_num(value: float) -> str:
-    """写 CSV 用的数值格式化：整数不带小数点，小数最多 4 位且不留尾零。"""
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return ""
-    if abs(value - round(value)) < 1e-9:
-        return str(int(round(value)))
-    return f"{value:.4f}".rstrip("0").rstrip(".")
-
-
-# =============================================================================
-# 7 步校验（WS-4-02 / WS-4-03 / WS-4-04）
-# =============================================================================
-def inspect_file(path: Path, *, size_bytes: int, original_rows: int | None = None) -> Inspection:
-    """按 `VALIDATE_ORDER` 巡检已落盘的文件。
-
-    前置条件：扩展名（第 1 步）与文件大小（第 2 步的字节部分）已在路由层通过，
-    故本函数从「行数」继续。返回值中的 `issue` 非空即表示失败。
-    """
-    max_rows = settings.max_rows
-    max_series = settings.max_series
-    limit_bytes = settings.max_file_size_mb * 1024 * 1024
-
-    # ---------------- 第 2 步 · 大小 / 行数 ----------------
-    if size_bytes > limit_bytes:
-        return Inspection(
-            issue=Issue(
-                ErrorCode.FILE_TOO_LARGE,
-                VALIDATE_ORDER[1],
-                f"文件大小 {size_bytes / 1024 / 1024:.1f} MB 超过上限 "
-                f"{settings.max_file_size_mb} MB",
-                {
-                    "fail_stage": VALIDATE_ORDER[1],
-                    "suggestion": (
-                        f"请按时间或商品拆分后分批上传，单文件不超过 "
-                        f"{settings.max_file_size_mb} MB"
-                    ),
-                },
-            )
-        )
-    if original_rows is not None and original_rows > max_rows:
-        return Inspection(
-            issue=Issue(
-                ErrorCode.ROW_OVER_LIMIT,
-                VALIDATE_ORDER[1],
-                f"数据行数 {original_rows:,} 超过上限 {max_rows:,}",
-                {
-                    "fail_stage": VALIDATE_ORDER[1],
-                    "series_limit": max_series,
-                    "suggestion": (
-                        f"请按时间或商品拆分后分批上传，单文件不超过 {max_rows:,} 行"
-                        "（也可先按销量 Top 商品筛选）"
-                    ),
-                },
-            )
-        )
-
-    encoding = _detect_encoding(path)
-    try:
-        header = _read_header(path, encoding)
-    except Exception as exc:  # noqa: BLE001 - pd.errors.* 种类多，统一降级为「空文件」
-        logger.info("表头读取失败，按空文件处理：%s", exc)
-        header = []
-
-    if not header:
-        return Inspection(
-            issue=Issue(
-                ErrorCode.EMPTY_FILE,
-                VALIDATE_ORDER[1],
-                "文件中没有可读取的表头",
-                {
-                    "fail_stage": VALIDATE_ORDER[1],
-                    "suggestion": "请确认文件非空且首行为表头（sku_id,warehouse_id,date,sales）",
-                },
-            )
-        )
-
-    data_rows = _count_data_rows(path)
-    if data_rows == 0:
-        return Inspection(
-            issue=Issue(
-                ErrorCode.EMPTY_FILE,
-                VALIDATE_ORDER[1],
-                "文件中没有数据行（仅有表头或为空白文件）",
-                {
-                    "fail_stage": VALIDATE_ORDER[1],
-                    "suggestion": "请补充至少一行历史销量数据后重新上传",
-                },
-            )
-        )
-    if data_rows > max_rows:
-        return Inspection(
-            issue=Issue(
-                ErrorCode.ROW_OVER_LIMIT,
-                VALIDATE_ORDER[1],
-                f"数据行数 {data_rows:,} 超过上限 {max_rows:,}",
-                {
-                    "fail_stage": VALIDATE_ORDER[1],
-                    "suggestion": (
-                        f"请按时间或商品拆分后分批上传，单文件不超过 {max_rows:,} 行"
-                    ),
-                },
-            )
-        )
-
-    # ---------------- 第 3 步 · 表头完整性（🔒 仓库列缺失即拒） ----------------
-    missing = [c for c in REQUIRED_COLUMNS if c not in header]
-    if missing:
-        chinese = [c for c in header if _CJK.search(c)]
-        extra = f"；检测到中文列名：{'、'.join(chinese[:6])}" if chinese else ""
-        return Inspection(
-            issue=Issue(
-                ErrorCode.MISSING_COLUMN,
-                VALIDATE_ORDER[2],
-                f"缺少必需字段：{'、'.join(missing)}{extra}",
-                {
-                    "fail_stage": VALIDATE_ORDER[2],
-                    "missing_columns": missing,
-                    "suggestion": (
-                        f"{EN_COLUMN_HINT}。当前表头：{'、'.join(header[:8])}"
-                        + ("（…）" if len(header) > 8 else "")
-                    ),
-                },
-            ),
-            error_columns=header,
-        )
-
-    df, _enc = _load_csv(path, encoding)
-    # 防御性复核：CSV 含引号换行时按行计数会偏小，这里以解析结果兜底
-    if len(df) > max_rows:
-        return Inspection(
-            issue=Issue(
-                ErrorCode.ROW_OVER_LIMIT,
-                VALIDATE_ORDER[1],
-                f"数据行数 {len(df):,} 超过上限 {max_rows:,}",
-                {
-                    "fail_stage": VALIDATE_ORDER[1],
-                    "suggestion": f"请按时间或商品拆分后分批上传，单文件不超过 {max_rows:,} 行",
-                },
-            )
-        )
-
-    columns = [str(c) for c in df.columns]
-    # CSV 行号 = DataFrame 行下标 + 2（第 1 行是表头）
-    row_no = (df.index + 2).to_numpy()
-
-    # ---------------- 第 4 步 · 日期可解析性 ----------------
-    parsed_date = _parse_dates(df[algo_config.COL_DATE])
-    bad_date = parsed_date.isna()
-    if bool(bad_date.any()):
-        idx = np.flatnonzero(bad_date.to_numpy())
-        samples = idx[:MAX_ERROR_ROWS_EXPORT]
-        unparsable = [
-            {
-                "row_no": int(row_no[i]),
-                "raw_value": str(df[algo_config.COL_DATE].iloc[i]),
-                "column": algo_config.COL_DATE,
-            }
-            for i in samples
-        ]
-        error_rows = [
-            {
-                **{c: str(df[c].iloc[i]) for c in columns},
-                "row_no": int(row_no[i]),
-                "error_reason": "日期无法解析",
-            }
-            for i in samples
-        ]
-        return Inspection(
-            issue=Issue(
-                ErrorCode.DATE_UNPARSABLE,
-                VALIDATE_ORDER[3],
-                f"日期列存在 {int(bad_date.sum()):,} 个无法解析的值",
-                {
-                    "fail_stage": VALIDATE_ORDER[3],
-                    "unparsable_rows": unparsable[:MAX_ERROR_ROWS_RETURNED],
-                    "suggestion": (
-                        "支持格式为 YYYY-MM-DD（推荐），也可识别 2015/1/7、20151010 等写法。"
-                        f"请修正上述行后重新上传。仅展示前 {MAX_ERROR_ROWS_RETURNED} 条，"
-                        "完整明细可下载错误明细 CSV"
-                    ),
-                },
-                error_rows=error_rows,
-            ),
-            stats={"row_count": int(len(df))},
-            error_columns=columns,
-        )
-
-    # ---------------- 第 5 步 · 销量非负 ----------------
-    sales = pd.to_numeric(df[algo_config.COL_SALES], errors="coerce")
-    non_numeric = sales.isna()
-    negative = (~non_numeric) & (sales < 0)
-    if bool(non_numeric.any()) or bool(negative.any()):
-        # ⚠️ 两种情形共用 40003「销量非负」：都是「sales 列的值不合法」，
-        #    修复动作也相同（改这一列），拆成两个码只会让前端的提示分支变多。
-        idx = np.flatnonzero((non_numeric | negative).to_numpy())
-        samples = idx[:MAX_ERROR_ROWS_EXPORT]
-        negative_rows = [
-            {"row_no": int(row_no[i]), "value": float(sales.iloc[i])}
-            for i in samples
-            if not bool(non_numeric.iloc[i])
-        ]
-        non_numeric_rows = [
-            {
-                "row_no": int(row_no[i]),
-                "raw_value": str(df[algo_config.COL_SALES].iloc[i]),
-                "column": algo_config.COL_SALES,
-            }
-            for i in samples
-            if bool(non_numeric.iloc[i])
-        ]
-        error_rows = [
-            {
-                **{c: str(df[c].iloc[i]) for c in columns},
-                "row_no": int(row_no[i]),
-                "error_reason": (
-                    "销量非数值或为空" if bool(non_numeric.iloc[i]) else "销量为负值"
-                ),
-            }
-            for i in samples
-        ]
-        parts = []
-        if len(negative_rows):
-            parts.append(f"{int(negative.sum()):,} 个负值")
-        if len(non_numeric_rows):
-            parts.append(f"{int(non_numeric.sum()):,} 个非数值 / 空值")
-        payload: dict[str, Any] = {
-            "fail_stage": VALIDATE_ORDER[4],
-            "negative_rows": negative_rows[:MAX_ERROR_ROWS_RETURNED],
-            "unparsable_rows": non_numeric_rows[:MAX_ERROR_ROWS_RETURNED],
-            "suggestion": (
-                "系统不会自动取绝对值、也不会自动补 0，请修正数据后重新上传"
-                "（负销量通常源于退货未冲销）。完整明细可下载错误明细 CSV"
-            ),
-        }
-        return Inspection(
-            issue=Issue(
-                ErrorCode.NEGATIVE_VALUE,
-                VALIDATE_ORDER[4],
-                f"销量列存在 {' 与 '.join(parts)}",
-                payload,
-                error_rows=error_rows,
-            ),
-            stats={"row_count": int(len(df))},
-            error_columns=columns,
-        )
-
-    df = df.assign(**{"_d": parsed_date, "_s": sales})
-
-    # ---------------- 第 6 步 · 时间连续性（断档 → 待用户确认） ----------------
-    gap_ranges, gap_count, gap_days_total = _detect_gap_ranges(df)
-
-    # ---------------- 第 7 步 · 序列数上限 ----------------
-    series_count = int(
-        df.groupby(
-            [algo_config.COL_SKU, algo_config.COL_WAREHOUSE], observed=True
-        ).ngroups
-    )
-    if gap_count == 0 and series_count > max_series:
-        return Inspection(
-            issue=Issue(
-                ErrorCode.SERIES_OVER_LIMIT,
-                VALIDATE_ORDER[6],
-                f"待预测序列数为 {series_count:,}，超过上限 {max_series:,}",
-                {
-                    "fail_stage": VALIDATE_ORDER[6],
-                    "series_count": series_count,
-                    "series_limit": max_series,
-                    "suggestion": (
-                        f"请在上传前筛选商品，将序列数控制在 {max_series:,} 以内"
-                        f"（当前超出 {series_count - max_series:,} 条）。"
-                        "序列数 = sku_id × warehouse_id 去重后的组合数"
-                    ),
-                },
-            ),
-            stats=_base_stats(df, series_count),
-            error_columns=columns,
-        )
-
-    return Inspection(
-        stats=_base_stats(df, series_count),
-        preview=_build_preview(df),
-        gap_ranges=gap_ranges,
-        gap_count=gap_count,
-        gap_days_total=gap_days_total,
-        error_columns=columns,
-    )
-
-
-def _base_stats(df: pd.DataFrame, series_count: int) -> dict[str, Any]:
-    """统计摘要（写入 `datasets` 的 4 个计数字段 + 起止日期）。"""
-    dates = df["_d"] if "_d" in df.columns else _parse_dates(df[algo_config.COL_DATE])
-    valid = dates.dropna()
-    return {
-        "row_count": int(len(df)),
-        "sku_count": int(df[algo_config.COL_SKU].nunique()),
-        "warehouse_count": int(df[algo_config.COL_WAREHOUSE].nunique()),
-        "valid_series_count": int(series_count),
-        "date_start": valid.min().strftime("%Y-%m-%d") if len(valid) else None,
-        "date_end": valid.max().strftime("%Y-%m-%d") if len(valid) else None,
-    }
-
-
-def _detect_gap_ranges(df: pd.DataFrame) -> tuple[list[dict[str, Any]], int, int]:
-    """向量化检测每条序列内部的日期断档（`FR-UPL-12`）。
-
-    返回 `(断档区间列表, 断档区间总数, 缺失天数合计)`。
-
-    ⚠️ 只检测序列**内部**的空洞，不做两端外推 —— 与 `algo.preprocess.interpolate_series`
-       的口径一致（序列首尾之前/之后「没有数据」不是断档，是还没开始/已经结束）。
-    """
-    if df.empty:
-        return [], 0, 0
-    frame = df.sort_values(
-        [algo_config.COL_SKU, algo_config.COL_WAREHOUSE, "_d"], kind="mergesort"
-    )
-    grouped = frame.groupby(
-        [algo_config.COL_SKU, algo_config.COL_WAREHOUSE], observed=True, sort=False
-    )
-    prev = grouped["_d"].shift(1)
-    delta = (frame["_d"] - prev).dt.days
-    mask = delta > 1
-    if not bool(mask.any()):
-        return [], 0, 0
-
-    hit = frame.loc[mask, [algo_config.COL_SKU, algo_config.COL_WAREHOUSE, "_d"]].copy()
-    hit["_prev"] = prev[mask]
-    hit["_days"] = (delta[mask] - 1).astype(int)
-    total_days = int(hit["_days"].sum())
-    hit = hit.sort_values(
-        [algo_config.COL_SKU, algo_config.COL_WAREHOUSE, "_prev"], kind="mergesort"
-    )
-
-    ranges: list[dict[str, Any]] = []
-    for _, r in hit.head(MAX_GAP_RANGES_RETURNED).iterrows():
-        ranges.append(
-            {
-                "sku_id": str(r[algo_config.COL_SKU]),
-                "warehouse_id": str(r[algo_config.COL_WAREHOUSE]),
-                "gap_start": (r["_prev"] + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
-                "gap_end": (r["_d"] - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
-                "gap_days": int(r["_days"]),
-            }
-        )
-    return ranges, int(len(hit)), total_days
-
-
-def _build_preview(df: pd.DataFrame, rows: int = PREVIEW_ROWS) -> dict[str, Any]:
-    """预览载荷（`FR-UPL-07`：表头与数据类型与源文件一致）。
-
-    只对 `sales` 做数值化（整数优先），其余列保留原始字符串字面值。
-
-    ⚠️ 必须剔除内部辅助列（`_d` 解析后的日期、`_s` 数值化后的销量）：
-       它们是校验过程的中间产物，泄漏到预览会让「表头与源文件一致」这条
-       `FR-UPL-07` 验收要点直接失败（EP-4 实测踩到）。
-    """
-    columns = [str(c) for c in df.columns if not str(c).startswith("_")]
-    out: list[dict[str, Any]] = []
-    for _, r in df.head(rows).iterrows():
-        item = {c: str(r[c]) for c in columns}
-        if algo_config.COL_SALES in item:
-            item[algo_config.COL_SALES] = _to_number(r[algo_config.COL_SALES])
-        out.append(item)
-    return {"columns": columns, "rows": out, "total": int(len(df)), "shown": len(out)}
 
 
 # =============================================================================
@@ -985,11 +465,11 @@ def _apply_interpolation(
         强行前向填充等于凭空造数据。该行为已在实施方案「偏离登记」中披露。
     """
     src = _abs(dataset)
-    df, enc = _load_csv(src)
+    df, enc = load_csv(src)
     if not src.exists():
         raise BizError(ErrorCode.IO_ERROR, "原始数据文件已丢失，请重新上传")
 
-    parsed = _parse_dates(df[algo_config.COL_DATE])
+    parsed = parse_dates(df[algo_config.COL_DATE])
     sales = pd.to_numeric(df[algo_config.COL_SALES], errors="coerce")
     frame = df.assign(**{"_d": parsed, "_s": sales}).dropna(
         subset=["_d", "_s"]
@@ -1012,7 +492,7 @@ def _apply_interpolation(
                     algo_config.COL_SKU: str(sku),
                     algo_config.COL_WAREHOUSE: str(wh),
                     algo_config.COL_DATE: day.strftime("%Y-%m-%d"),
-                    algo_config.COL_SALES: _fmt_num(value),
+                    algo_config.COL_SALES: fmt_num(value),
                 }
             )
 
@@ -1155,8 +635,8 @@ def _sample_payload(
     """幂等命中时也要给出预览（复用落盘文件的前 20 行）。"""
     src = _abs(dataset)
     if src.exists():
-        df, _enc = _load_csv(src, None)
-        preview = _build_preview(df)
+        df, _enc = load_csv(src, None)
+        preview = build_preview(df)
     else:  # pragma: no cover - 共享文件被人为删除时的降级
         preview = {
             "columns": list(REQUIRED_COLUMNS),
@@ -1218,7 +698,7 @@ def get_detail(db: Session, *, dataset_id: int, user_id: int) -> dict[str, Any]:
     if not path.exists():
         raise BizError(ErrorCode.IO_ERROR, "数据文件已丢失，请重新上传")
 
-    df, _enc = _load_csv(path, None)
+    df, _enc = load_csv(path, None)
     df = df.assign(**{"_s": pd.to_numeric(df[algo_config.COL_SALES], errors="coerce")})
     infos = classify_series(df)
     counts = count_levels(infos)
@@ -1255,7 +735,7 @@ def get_preview(
         raise BizError(ErrorCode.IO_ERROR, "数据文件已丢失，请重新上传")
 
     limit = max(1, min(int(limit), 100))
-    df, _enc = _load_csv(path, None)
+    df, _enc = load_csv(path, None)
     total = int(dataset.row_count if dataset.row_count is not None else len(df))
 
     if keyword:
@@ -1270,7 +750,7 @@ def get_preview(
             )
             df = df.loc[mask]
 
-    preview = _build_preview(df, rows=limit)
+    preview = build_preview(df, rows=limit)
     preview["total"] = total
     return preview
 

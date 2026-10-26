@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
@@ -19,6 +20,9 @@ import torch
 
 from . import config as C
 from . import classify, fallback, features, metrics as metrics_mod, preprocess
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Timing:
@@ -388,6 +392,10 @@ def _normalize_dates(raw: list) -> list[str]:
         try:
             out.append(pd.Timestamp(x).strftime("%Y-%m-%d"))
         except Exception:
+            # `R-12`：原来这里是裸 `continue`。一旦日历特征整列解析失败
+            # （如上游把日期写成 epoch 数字），预测照常出结果但**没有任何痕迹**。
+            # 用 debug 级：逐值兜底，正常数据里不该出现，排查时能开日志定位。
+            logger.debug("日期归一化跳过不可解析的值：%r", x, exc_info=True)
             continue
     return out
 

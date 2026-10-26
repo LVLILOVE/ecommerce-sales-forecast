@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
@@ -22,6 +23,8 @@ from torch.utils.data import DataLoader, TensorDataset
 from . import config as C
 from . import features, model as model_mod, preprocess
 from . import metrics as metrics_mod
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -351,12 +354,16 @@ def train_one(
             wait += 1
             if wait >= cfg.patience:
                 if verbose:
-                    print(f"    早停于 epoch {epoch}（最佳 epoch {best_epoch}，"
-                          f"验证损失 {best_loss:.6f}）")
+                    logger.info(
+                        "    早停于 epoch %s（最佳 epoch %s，验证损失 %.6f）",
+                        epoch, best_epoch, best_loss,
+                    )
                 break
 
         if verbose and epoch % 10 == 0:
-            print(f"    epoch {epoch:3d}  train {train_loss:.6f}  val {val_loss:.6f}")
+            logger.info(
+                "    epoch %3d  train %.6f  val %.6f", epoch, train_loss, val_loss
+            )
 
     seconds = time.perf_counter() - t0
     if best_state is not None:
@@ -399,12 +406,14 @@ def grid_search(
     for i, combo in enumerate(combos, 1):
         cfg = TrainConfig(**{**base.as_dict(), **combo})
         if verbose:
-            print(f"  [{i}/{len(combos)}] {combo}")
+            logger.info("  [%s/%s] %s", i, len(combos), combo)
         res = train_one(ts, cfg, verbose=False)
         results.append(res)
         if verbose:
-            print(f"        val_loss {res.best_val_loss:.6f}  "
-                  f"epochs {res.epochs_run}  {res.seconds:.2f}s")
+            logger.info(
+                "        val_loss %.6f  epochs %s  %.2fs",
+                res.best_val_loss, res.epochs_run, res.seconds,
+            )
 
     results.sort(key=lambda r: r.best_val_loss)
     return results

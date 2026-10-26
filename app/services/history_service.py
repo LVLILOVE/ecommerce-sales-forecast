@@ -635,4 +635,7 @@ def _model_ready() -> bool:
         model_holder.assert_ready()
         return True
     except Exception:  # noqa: BLE001 - 概览不该因模型未就绪而失败
+        # `R-12`：原来是裸 return False。工作台因此少一张「可发起预测」的提示，
+        # 若真相是模型**加载失败**（而不是还没加载），这里就是唯一线索。
+        logger.debug("模型未就绪（工作台降级）", exc_info=True)
         return False

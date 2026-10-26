@@ -74,6 +74,7 @@ from app.dao import metric_dao, oplog_dao, prediction_dao, task_dao
 from app.models.operation_log import ACTION_PREDICT, RESULT_FAIL, RESULT_SUCCESS
 from app.models.task import STATUS_FAILED, STATUS_SUCCEEDED
 from app.services import dataset_service
+from app.validators import load_csv
 
 logger = logging.getLogger(__name__)
 settings = config.settings
@@ -798,7 +799,7 @@ def _read_dataset(dataset: Any) -> pd.DataFrame:
             "数据集文件已不存在，请重新上传",
             {"dataset_id": dataset.id, "file_path": dataset.file_path},
         )
-    df, _enc = dataset_service._load_csv(path, None)  # noqa: SLF001
+    df, _enc = load_csv(path, None)
     return df
 
 

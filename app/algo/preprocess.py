@@ -9,10 +9,14 @@
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from . import config as C
+
+logger = logging.getLogger(__name__)
 
 
 # ===================================================================== 异常
@@ -193,6 +197,10 @@ def truncate_spikes(
                              | np.r_[False, protected[:-1]]
                              | np.r_[protected[1:], False])
         except Exception:
+            # 🔴 `R-12`：这里静默失败等于**悄悄关掉营销节点保护** ——
+            # 双十一/618 的尖峰会被当成异常削掉，指标变差却查不到原因。
+            # 用 warning（这是「功能降级」），不是 debug（逐值兜底）。
+            logger.warning("营销节点保护计算失败，本次不启用保护", exc_info=True)
             protected = np.zeros(n, dtype=bool)
 
     if protected.any():
@@ -292,4 +300,7 @@ def resolve_device(prefer: str = "auto") -> str:
         free, _total = torch.cuda.mem_get_info()
         return "cuda" if free > 512 * 1024 * 1024 else "cpu"
     except Exception:
+        # 拿不到显存信息时按「够用」处理并走 CUDA（与改动前行为一致），
+        # 但至少留一条线索，避免「本该降级到 CPU 却 OOM」无从追查。
+        logger.debug("读取显存信息失败，按 CUDA 继续", exc_info=True)
         return "cuda"

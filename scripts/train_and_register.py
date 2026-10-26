@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import time
 import warnings
@@ -31,6 +32,17 @@ from app.algo import config as C                            # noqa: E402
 from app.algo import classify, features, infer, metrics as metrics_mod, preprocess, train  # noqa: E402
 
 OUT_DIR = ROOT / "outputs" / "models"
+
+# 🔴 `app.algo.train` 的训练进度走 `logging`（`R-14`：与全项目一致，不再用 `print`）。
+#    这里必须显式配置，否则默认 root logger 是 WARNING ⇒ **进度全部消失**，
+#    而脚本本身还在正常跑，看起来像「训练卡住了但没输出」。
+#    `stream=sys.stdout` 是刻意的：脚本自己的报告也用 `print`（stdout），
+#    两股输出必须同流，否则 `... > log.txt` 时进度会丢进 stderr、终端里顺序也会错乱。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    stream=sys.stdout,
+)
 
 
 # ============================================================ 数据
