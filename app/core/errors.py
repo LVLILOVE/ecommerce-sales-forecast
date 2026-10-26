@@ -7,10 +7,21 @@
 -----------------------------------------------------------------------------
 关键约定：
   - BE-20 🔒：业务错误一律 HTTP 200 + body.code 区分（FR-SYS-01 的字面要求）。
-    唯一例外是 HTTP 401 —— 需真实状态码以触发前端重新认证。
+    例外只有两类：
+      ① HTTP 401 —— 需真实状态码以触发前端重新认证；
+      ② 服务端故障码（code >= 50000）—— 见下方「R-09」说明。
   - API-00-9：401xx 中仅 40101（未登录）/ 40102（Token 失效）返回真实 401，
     二者由 get_current_user 抛出；登录失败（40103/40104）发生在免鉴权的登录
     接口上，仍按 HTTP 200 + body.code 返回。
+  - R-09 🔒（2026-10-26）：**`code >= 50000` 一律返回真实 HTTP 500**。
+    动机是「可观测性」而非「更 REST」—— 统一 200 时 Nginx/ALB/APM 的 5xx
+    告警规则对本站**完全失效**，`curl -f` 也退化成必须人工解析 body。
+    折中方式是**只加 5xx 映射**：4xxxx（含 403/404 语义码）继续保持 200，
+    这样前端「一套 body.code 分支」的收益完全保留，也让本仓 38 套
+    `verify_*` 脚本的既有断言不受影响。
+    ⚠️ 客户端要注意：`code >= 50000` 的响应**不再进 axios 的 success 分支**，
+    `client.ts` 的响应拦截器必须从 `error.response.data` 里把 code/message
+    取回来（blob 下载路径还要先解 JSON）。
   - BE-21 ⚠️：兜底处理器不向用户泄露堆栈/原始异常文本，只返回固定文案。
   - EP-2 修复 🔒：校验错误载荷必须先经 `_safe_errors()` 消毒再序列化。
     pydantic v2 在字段级校验器抛 `ValueError` 时会把**异常对象**放进
@@ -80,8 +91,30 @@ class ErrorCode:
     DB_ERROR = 50003
 
 
-# 需要返回真实 HTTP 401 的错误码（BE-20 例外）
+# 需要返回真实 HTTP 401 的错误码（BE-20 例外 ①）
 _HTTP_401_CODES = (ErrorCode.UNAUTHORIZED, ErrorCode.TOKEN_EXPIRED)
+
+# 需要返回真实 HTTP 500 的错误码下界（BE-20 例外 ②，见模块头 R-09）
+_HTTP_5XX_FLOOR = 50000
+
+
+def http_status_for(code: int) -> int:
+    """把业务错误码映射成 HTTP 状态码（**唯一映射入口**，改动只改这里）。
+
+    | 输入 | 输出 | 理由 |
+    |---|---|---|
+    | 40101 / 40102 | 401 | 触发前端重新认证 |
+    | >= 50000 | 500 | 5xx 告警 / `curl -f` 可用 |
+    | 其余（含 40301/40401） | 200 | 保住「一套 `body.code` 分支」 |
+
+    刻意**不**把 40301 映射成 403、40401 映射成 404：那需要同步改前端
+    的 8 处分支与 38 套校验脚本，收益（更"像" REST）远小于代价。
+    """
+    if code in _HTTP_401_CODES:
+        return 401
+    if code >= _HTTP_5XX_FLOOR:
+        return 500
+    return 200
 
 # 密码类字段：其校验失败应映射为 40011（密码强度不足），而不是通用的 40012。
 # 依据技术文档 §5.4 的 API-01 错误码表：40011 = 密码强度不足。
@@ -126,7 +159,16 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(BizError)
     async def _biz(_, exc: BizError):
-        status = 401 if exc.code in _HTTP_401_CODES else 200
+        status = http_status_for(exc.code)
+        # 5xx 说明是「我们的错」而不是「用户的错」：必须留一条 error 级日志，
+        # 否则接入 APM 后只能看到状态码、定位不到是哪条业务分支。
+        if status >= 500:
+            logger.error(
+                "服务端业务异常 code=%s message=%s data_keys=%s",
+                exc.code,
+                exc.message,
+                sorted((exc.data or {}).keys()),
+            )
         return JSONResponse(
             status_code=status,
             content={"code": exc.code, "message": exc.message, "data": exc.data},

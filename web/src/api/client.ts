@@ -88,7 +88,7 @@ export function createClient(): AxiosInstance {
 
   instance.interceptors.response.use(
     (response) => response,
-    (error: AxiosError<ApiResponse<unknown>>) => {
+    async (error: AxiosError<ApiResponse<unknown>>) => {
       // 网络层错误（无响应）
       if (!error.response) {
         const isTimeout = error.code === 'ECONNABORTED';
@@ -100,9 +100,37 @@ export function createClient(): AxiosInstance {
         );
       }
 
-      const body = error.response.data;
-      const code = body?.code ?? error.response.status * 100;
-      const message = body?.message ?? `请求失败（HTTP ${error.response.status}）`;
+      /**
+       * 🔴 **非 2xx 的响应体不一定是 JSON**（`R-09`）。
+       *
+       * 后端从 2026-10-26 起把 `code >= 50000` 映射成真实 HTTP 500，
+       * 于是「服务端故障」这类响应**不再进 success 分支**，改由这里处理。
+       * 两种形态都要能吃下：
+       *   ① 普通接口 → `error.response.data` 是已解析的 JSON；
+       *   ② `responseType: 'blob'` 的下载接口（导出 / 错误明细）→ 它是 **Blob**，
+       *      直接读 `body.code` 恒为 `undefined`，会把 50002「文件已丢失」
+       *      降级成一句「请求失败（HTTP 500）」，用户看不出该重传数据。
+       *
+       * 注意这里是 `async`：`Blob.text()` 是异步的。响应拦截器的拒绝处理器
+       * 允许返回 Promise，`await` 之后再 `throw` 仍会正确冒泡到调用方。
+       */
+      const raw: unknown = error.response.data;
+      let body: ApiResponse<unknown> | null =
+        raw !== null && typeof raw === 'object' && !(raw instanceof Blob)
+          ? (raw as ApiResponse<unknown>)
+          : null;
+      if (raw instanceof Blob && (raw.type || '').includes('json')) {
+        try {
+          body = JSON.parse(await raw.text()) as ApiResponse<unknown>;
+        } catch {
+          body = null;
+        }
+      }
+
+      const code =
+        typeof body?.code === 'number' ? body.code : error.response.status * 100;
+      const message =
+        body?.message ?? `请求失败（HTTP ${error.response.status}）`;
 
       if (error.response.status === 401) {
         tokenStore.clear();

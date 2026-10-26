@@ -178,8 +178,10 @@ def case_api17() -> None:
           f"HTTP={st} code={b.get('code')}")
 
     # ⚠️ `size` 上限由 FastAPI 的 `Query(le=100)` 拦，会抛 RequestValidationError。
-    #    本项目的全局异常处理器把它统一转成 HTTP 200 + `code: 50001`（见 errors.py），
+    #    本项目的全局异常处理器把它统一转成 HTTP 200 + `code: 40012`（见 errors.py），
     #    而不是 422 —— 判据必须跟着实际契约写，否则会假失败。
+    #    📌 2026-10-26（`R-09`）后仍成立：只有 `code >= 50000` 才改返真实 500，
+    #    40012 属业务校验码，状态码保持 200。
     st, b = api("GET", "/api/v1/history?size=500")
     check("③ size 超上限被拒（非静默截断）",
           st == 200 and b.get("code") != 0,
