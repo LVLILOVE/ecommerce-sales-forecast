@@ -59,6 +59,7 @@ from app.core.errors import BizError, ErrorCode
 from app.dao import dataset_dao, metric_dao, prediction_dao, task_dao
 from app.models.metric import THRESHOLD_MAPE
 from app.services import dataset_service
+from app.validators import load_csv
 
 logger = logging.getLogger(__name__)
 
@@ -522,7 +523,7 @@ def _series_history(
 def _read_frame(db: Session, dataset_id: int) -> Any:
     """读数据集 CSV 为 DataFrame；失败返回 `None`（调用方降级）。
 
-    ⚠️ 走 `dataset_service._load_csv`（`_detect_encoding` + GB18030 兜底）
+    ⚠️ 走 `validators.load_csv`（`detect_encoding` + GB18030 兜底）
        与上传/预测阶段**同源**。这里刻意复用而不是自己 `pd.read_csv`：
        上传时按 GB18030 存的历史文件若在这里按 UTF-8 读，会直接抛
        `UnicodeDecodeError`，曲线左侧实线段整段消失。
@@ -535,7 +536,7 @@ def _read_frame(db: Session, dataset_id: int) -> Any:
         logger.warning("数据集文件已不存在，历史段降级为空（id=%s）", dataset_id)
         return None
     try:
-        df, _enc = dataset_service._load_csv(path, None)  # noqa: SLF001
+        df, _enc = load_csv(path, None)
         return df
     except Exception:  # noqa: BLE001
         logger.warning("数据集读取失败，历史段降级为空（id=%s）", dataset_id, exc_info=True)

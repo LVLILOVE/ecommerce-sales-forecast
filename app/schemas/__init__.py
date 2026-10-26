@@ -1,93 +1,211 @@
 """
 =============================================================================
-请求 / 响应模型（Pydantic v2）
+请求 / 响应模型（Pydantic v2）—— **模型真源**
 -----------------------------------------------------------------------------
-版本     : V1.0（EP-2 启用）
+版本     : V1.1（`R-08`，2026-10-26 反向依赖修正）
 依据文档 : 《开发技术文档 V1.0》§2.2（目录结构）、§4.2（接口子层职责）
-           《项目开发实施方案 V1.0》§2.2（`app/schemas/` 由 `code/backend/schemas.py` 拆分）
+           《项目开发实施方案 V1.0》§2.2
 -----------------------------------------------------------------------------
-🔒 单一真源：本包**不复制、不改写**任何模型，而是从 `code/backend/schemas.py`
-   按绝对路径加载后整体 re-export。这样 `from app.schemas import RegisterRequest`
-   与 `python scripts/verify_schemas.py` 读的是**同一个文件**。
+📌 按业务域拆成 7 个模块（`R-08`）：
+    common   模型基类 / 业务常量 / 统一响应包装 / 健康检查
+    auth     认证与用户           API-01 ~ 05
+    dataset  数据集               API-06 ~ 11
+    task     预测任务             API-12 ~ 15
+    result   结果与明细           API-14
+    history  历史与对比           API-16 ~ 19
+    admin    管理端               API-22 ~ 30
 
-为什么现在不拆
------------------------------------------------------------------------------
-`code/backend/schemas.py` 同时是三样东西：
-  1. 运行期的模型定义；
-  2. 交付资产 —— `scripts/verify_schemas.py` 直接 import 它（54 条断言）；
-  3. 文档锚点 —— PRD / 技术文档按 `code/backend/schemas.py:行号` 引用
-     （例如「`LoginRequest.email` 的类型是 `EmailStr`（`code/backend/schemas.py:176`）」）。
-     ⚠️ 该锚点已两次漂移：`EP-4` 在 `ValidationErrorData` 增补 `dataset_id`（+5 行）
-        把 `172` 推到 `177`；`EP-5` 在**中部**新增 `HorizonEstimate` /
-        `estimate_by_horizon` / `CreateTaskResponse.timing` 三处后回到 `176`。
-        教训：**行号锚点本身是不可靠的**——引用前先 grep 一次真实行号，
-        宁可写类名 + 字段名也不要只写行号。
+🔴 **依赖方向已反转**（`R-08` 的核心）
+    历史做法：`app/schemas/__init__.py` 用 `spec_from_file_location` 在**运行期**
+    按绝对路径加载包外的 `code/backend/schemas.py`，再由 `verify_schemas.py`
+    直接 import 那个文件。好处是「只有一份定义」，代价是三条：
+      ① 打包/`pip install` 后找不到 `code/`，应用直接起不来；
+      ② 静态分析与 IDE 跳转全部失效（模型不在任何包路径上）；
+      ③ 部署必须把整个 `code/` 目录当作运行期依赖（踩过一次 `ImportError`）。
 
-折叠/移动它会同时打断 ②③，属《实施方案》§5.7 的「18 项文档回写」范畴，
-登记在 `EP-8`。若在此处先复制一份到 `app/schemas/`，会立刻出现两套定义、
-字段各自漂移 —— 这正是本项目在原型阶段踩过的「两套数字」问题在类型层的翻版，
-必须避免。
+    现在：**本包是唯一真源**；`code/backend/schemas.py` 由
+    `scripts/gen_backend_schemas.py` **生成**（把 7 个模块按依赖顺序拼成一个
+    独立文件），供文档锚点、`verify_schemas.py` 与既有 5 个 `verify_*` 脚本的
+    文本/AST 扫描继续使用。
+    ⇒ 改模型只改 `app/schemas/*.py`，然后跑 `python scripts/gen_backend_schemas.py`；
+      忘了生成会被 `scripts/gen_backend_schemas.py --check` 拦下（已进 `verify_ep9` 的 CHAIN）。
 
-因此本文件只做**加载与转发**。`EP-8` 完成文档回写后，把 33 个模型按计划拆成
-`common` / `auth` / `dataset` / `task` / `result` / `history` / `admin` 子模块，
-届时把下面的加载逻辑换成常规 import 即可，调用方无需改动。
+⚠️ 生成顺序即依赖顺序：`common → auth → dataset → task → result → history → admin`。
+   改变这个顺序会破坏拼接后文件里的前向引用（pydantic 在类创建时就要解析注解）。
 =============================================================================
 """
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
+from app.schemas.common import (
+    AppBase,
+    ApiResponse,
+    Paginated,
+    ValidationErrorData,
+    HealthResponse,
+    T,
+    MAX_FILE_SIZE_MB,
+    MAX_ROWS,
+    MAX_SERIES,
+    L1_MIN_VALID_POINTS,
+    ALLOWED_HORIZONS,
+    REQUIRED_COLUMNS,
+    SLA_SECONDS,
+    TOKEN_VERSION_DEFAULT,
+    PASSWORD_MAX_CHARS,
+    BCRYPT_MAX_BYTES,
+    _enforce_bcrypt_bytes,
+)
+from app.schemas.auth import (
+    RegisterRequest,
+    RegisterResponse,
+    JwtPayload,
+    LoginRequest,
+    UserProfile,
+    LoginResponse,
+    UpdateUserRequest,
+)
+from app.schemas.dataset import (
+    DatasetSummary,
+    DatasetPreview,
+    GapWarning,
+    UploadDatasetResponse,
+    ResolveGapRequest,
+    LevelPreview,
+    HorizonEstimate,
+    DatasetDetailResponse,
+)
+from app.schemas.task import (
+    CreateTaskRequest,
+    CreateTaskResponse,
+    TaskStatusResponse,
+)
+from app.schemas.result import (
+    MetricBundle,
+    Coverage,
+    Distribution,
+    TimingMs,
+    SeriesCurve,
+    PredictionRow,
+    TaskBrief,
+    DatasetBrief,
+    PredictionResultResponse,
+    DetailQuery,
+    ExportQuery,
+    DETAIL_SORT_COLUMNS,
+    DETAIL_LEVELS,
+)
+from app.schemas.history import (
+    HistoryQuery,
+    HistoryItem,
+    HistoryPage,
+    CompareRequest,
+    CompareSeries,
+    CompareTaskSlot,
+    CompareResponse,
+    WorkbenchSummary,
+)
+from app.schemas.admin import (
+    AdminOverviewQuery,
+    AdminUserQuery,
+    AdminTaskQuery,
+    AdminLogQuery,
+    AdminUpdateUserRequest,
+    ResetPasswordRequest,
+    SwitchModelRequest,
+    MapeTrendPoint,
+    ActiveModelBrief,
+    AdminOverviewResponse,
+    AdminUserBrief,
+    AdminUserPage,
+    AdminUpdateUserResponse,
+    ResetPasswordResponse,
+    AdminTaskBrief,
+    AdminTaskPage,
+    AdminDeleteTaskResponse,
+    AdminModelBrief,
+    AdminModelListResponse,
+    SwitchModelResponse,
+    AdminLogBrief,
+    AdminLogPage,
+)
 
-from app.core import config
-
-_SOURCE: Path = config.settings.base_dir / "code" / "backend" / "schemas.py"
-_MODULE_NAME = "app_schemas_source"          # 内部模块名，不出现在调用方
-
-if not _SOURCE.exists():  # pragma: no cover - 仅在仓库不完整时触发
-    raise ImportError(f"找不到模型源文件：{_SOURCE}")
-
-if _MODULE_NAME in sys.modules:
-    _mod = sys.modules[_MODULE_NAME]
-else:
-    _spec = importlib.util.spec_from_file_location(_MODULE_NAME, _SOURCE)
-    if _spec is None or _spec.loader is None:  # pragma: no cover
-        raise ImportError(f"无法加载模型源文件：{_SOURCE}")
-    _mod = importlib.util.module_from_spec(_spec)
-    sys.modules[_MODULE_NAME] = _mod
-    _spec.loader.exec_module(_mod)
-
-# 需要转发的名字：全部非私有顶层对象（模型、常量、工具函数）
-_SKIP = {
-    "__builtins__",
-    "__name__",
-    "__doc__",
-    "__file__",
-    "__loader__",
-    "__spec__",
-    "__package__",
-    "__annotations__",
-}
-_EXPORTED = [k for k in vars(_mod) if not k.startswith("_") and k not in _SKIP]
-
-globals().update({k: getattr(_mod, k) for k in _EXPORTED})
-__all__ = _EXPORTED
-
-# 启动即自检：确保 EP-2 依赖的关键模型确实被转发过来（防止源文件被改名后静默失灵）
-_REQUIRED = (
+__all__ = [
+    "AppBase",
     "ApiResponse",
     "Paginated",
+    "ValidationErrorData",
+    "HealthResponse",
+    "T",
+    "MAX_FILE_SIZE_MB",
+    "MAX_ROWS",
+    "MAX_SERIES",
+    "L1_MIN_VALID_POINTS",
+    "ALLOWED_HORIZONS",
+    "REQUIRED_COLUMNS",
+    "SLA_SECONDS",
+    "TOKEN_VERSION_DEFAULT",
+    "PASSWORD_MAX_CHARS",
+    "BCRYPT_MAX_BYTES",
+    "_enforce_bcrypt_bytes",
     "RegisterRequest",
     "RegisterResponse",
-    "LoginRequest",
-    "LoginResponse",
-    "UserProfile",
-    "UpdateUserRequest",
     "JwtPayload",
-    "TOKEN_VERSION_DEFAULT",
-    "BCRYPT_MAX_BYTES",
-    "PASSWORD_MAX_CHARS",
-)
-_missing = [n for n in _REQUIRED if n not in globals()]
-if _missing:  # pragma: no cover - 仅在模型被误删时触发
-    raise ImportError(f"code/backend/schemas.py 缺少必需模型：{_missing}")
+    "LoginRequest",
+    "UserProfile",
+    "LoginResponse",
+    "UpdateUserRequest",
+    "DatasetSummary",
+    "DatasetPreview",
+    "GapWarning",
+    "UploadDatasetResponse",
+    "ResolveGapRequest",
+    "LevelPreview",
+    "HorizonEstimate",
+    "DatasetDetailResponse",
+    "CreateTaskRequest",
+    "CreateTaskResponse",
+    "TaskStatusResponse",
+    "MetricBundle",
+    "Coverage",
+    "Distribution",
+    "TimingMs",
+    "SeriesCurve",
+    "PredictionRow",
+    "TaskBrief",
+    "DatasetBrief",
+    "PredictionResultResponse",
+    "DetailQuery",
+    "ExportQuery",
+    "DETAIL_SORT_COLUMNS",
+    "DETAIL_LEVELS",
+    "HistoryQuery",
+    "HistoryItem",
+    "HistoryPage",
+    "CompareRequest",
+    "CompareSeries",
+    "CompareTaskSlot",
+    "CompareResponse",
+    "WorkbenchSummary",
+    "AdminOverviewQuery",
+    "AdminUserQuery",
+    "AdminTaskQuery",
+    "AdminLogQuery",
+    "AdminUpdateUserRequest",
+    "ResetPasswordRequest",
+    "SwitchModelRequest",
+    "MapeTrendPoint",
+    "ActiveModelBrief",
+    "AdminOverviewResponse",
+    "AdminUserBrief",
+    "AdminUserPage",
+    "AdminUpdateUserResponse",
+    "ResetPasswordResponse",
+    "AdminTaskBrief",
+    "AdminTaskPage",
+    "AdminDeleteTaskResponse",
+    "AdminModelBrief",
+    "AdminModelListResponse",
+    "SwitchModelResponse",
+    "AdminLogBrief",
+    "AdminLogPage",
+]

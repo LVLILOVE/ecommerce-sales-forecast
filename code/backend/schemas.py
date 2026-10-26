@@ -2,26 +2,37 @@
 =============================================================================
 电商销量预测系统 · 后端请求/响应模型（Pydantic v2）
 -----------------------------------------------------------------------------
-版本     : V1.0
+⚠️ **本文件由 `scripts/gen_backend_schemas.py` 自动生成，请勿手工编辑。**
+  修改会被下次生成覆盖，且 `python scripts/gen_backend_schemas.py --check`
+  （已进 `verify_ep9` 的 CHAIN）会判定不一致而失败。
+
+真源     : `app/schemas/`（common / auth / dataset / task / result / history / admin）
+版本     : V1.1（`R-08`，2026-10-26）
 依据文档 : 《开发技术文档 V1.0》第 4 章（后端设计）、第 5 章（接口设计）
 对应前端 : code/frontend/types.ts（字段逐一对应，全链路 snake_case）
-落位建议 : app/schemas/
+
+存在的理由
 -----------------------------------------------------------------------------
-设计约定：
+`app/schemas/` 是运行期真源；本文件是**给静态使用方看的独立副本**：
+  · `scripts/verify_schemas.py`        直接 import 它跑 54 条格式约束断言
+  · `scripts/verify_ep6/7/8*.py`       读文本做正则 / AST 扫描
+  · `scripts/verify_ep9_contract.py`   与前端 `types.ts` 做字段双向比对
+这些脚本只把 `code/backend` 加进 `sys.path`，所以本文件必须能**单文件 import**，
+不能改成一个转发 shim（那会 `ImportError`）。
+
+设计约定（与真源一致）：
   1. 每个模型只负责「格式校验」，不承载业务规则（业务规则属 services 层）。
-     依据开发方案 §4.2：接口子层「校验格式，不校验业务」。
-     例外：password 的强度规则由 PRD 明确规定（FR-USR-02），属格式约束，
-     故允许在此实现，且必须与前端校验规则保持同源常量。
-  2. 响应模型使用 from_attributes = True，由 ORM 实体直接转换，
-     避免 service 层手写字段映射（开发方案 §4.2 DAO 层职责边界）。
+     例外：password 的强度规则由 PRD 明确规定（FR-USR-02），属格式约束。
+  2. 响应模型使用 from_attributes = True，由 ORM 实体直接转换。
   3. 面向用户的 message 必须包含「错在哪 + 怎么改」（NFR-USE-03）。
 =============================================================================
 """
 from __future__ import annotations
 
 from typing import Any, Generic, Literal, TypeVar
-
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+# ---- 源模块：app/schemas/common.py ----------------------------------------
 
 T = TypeVar("T")
 
@@ -35,7 +46,6 @@ class AppBase(BaseModel):
     """
 
     model_config = ConfigDict(protected_namespaces=())
-
 # =============================================================================
 # 0. 常量（与 app/algo/config.py、前端 LIMITS 三处保持同源）
 # =============================================================================
@@ -72,8 +82,6 @@ def _enforce_bcrypt_bytes(v: str) -> str:
             "中文等字符每个占 3 字节，请缩短密码或改用数字与字母"
         )
     return v
-
-
 # =============================================================================
 # 1. 通用响应包装（FR-SYS-01：所有接口结构一致）
 # =============================================================================
@@ -128,7 +136,22 @@ class ValidationErrorData(AppBase):
     #    此时本字段为 None —— 前端必须判空，不得假定它一定存在。
     dataset_id: int | None = None
     suggestion: str = Field(..., description="修复建议，禁止留空（NFR-USE-03）")
+# =============================================================================
+# 7. 系统                                              API-20
+# =============================================================================
 
+
+class HealthResponse(AppBase):
+    status: Literal["ok", "degraded"] = "ok"
+    version: str
+    database: Literal["ok", "error"] = "ok"
+    model_loaded: bool
+    model_version: str | None = None
+    device: Literal["cuda", "cpu"] | None = None
+    uptime_seconds: int = 0
+
+
+# ---- 源模块：app/schemas/auth.py ----------------------------------------
 
 # =============================================================================
 # 2. 认证与用户                                        API-01 ~ API-05
@@ -214,6 +237,8 @@ class UpdateUserRequest(AppBase):
             raise ValueError("密码需不少于 8 位，且同时包含字母与数字")
         return _enforce_bcrypt_bytes(v)
 
+
+# ---- 源模块：app/schemas/dataset.py ----------------------------------------
 
 # =============================================================================
 # 3. 数据集                                            API-06 ~ API-11
@@ -307,6 +332,8 @@ class DatasetDetailResponse(AppBase):
     #    默认空列表，保证老调用方（只读前四个字段）不受影响。
     estimate_by_horizon: list[HorizonEstimate] = Field(default_factory=list)
 
+
+# ---- 源模块：app/schemas/task.py ----------------------------------------
 
 # =============================================================================
 # 4. 预测任务                                          API-12 ~ API-15
@@ -406,6 +433,8 @@ class TaskStatusResponse(AppBase):
     error_msg: str | None = None
     completed_stage: str | None = None
 
+
+# ---- 源模块：app/schemas/result.py ----------------------------------------
 
 # =============================================================================
 # 5. 预测结果                                          API-14
@@ -623,6 +652,8 @@ class ExportQuery(AppBase):
     )
 
 
+# ---- 源模块：app/schemas/history.py ----------------------------------------
+
 # =============================================================================
 # 6. 历史与对比                                        API-16 ~ API-19
 # =============================================================================
@@ -750,20 +781,7 @@ class WorkbenchSummary(AppBase):
     has_model: bool = False
 
 
-# =============================================================================
-# 7. 系统                                              API-20
-# =============================================================================
-
-
-class HealthResponse(AppBase):
-    status: Literal["ok", "degraded"] = "ok"
-    version: str
-    database: Literal["ok", "error"] = "ok"
-    model_loaded: bool
-    model_version: str | None = None
-    device: Literal["cuda", "cpu"] | None = None
-    uptime_seconds: int = 0
-
+# ---- 源模块：app/schemas/admin.py ----------------------------------------
 
 # =============================================================================
 # 8. 管理端（`CH-01`）                                API-22 ~ API-30

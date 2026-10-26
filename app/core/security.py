@@ -57,7 +57,7 @@ BCRYPT_ROUNDS = 12
 """bcrypt cost 因子。🔒 必须与 `code/db/seed.sql` 的管理员种子串一致。"""
 
 BCRYPT_MAX_BYTES = 72
-"""bcrypt 的硬上限（字节）。与 `code/backend/schemas.py::BCRYPT_MAX_BYTES` 同源。"""
+"""bcrypt 的硬上限（字节）。与 `app/schemas/common.py::BCRYPT_MAX_BYTES` 同源。"""
 
 JWT_ALGORITHM = "HS256"
 JWT_ISSUER = "sales-forecast-api"
@@ -155,7 +155,7 @@ def create_access_token(user_id: int, token_version: int) -> tuple[str, int]:
 
     :return: `(token, expires_in_seconds)`
 
-    载荷字段与 `code/backend/schemas.py::JwtPayload` 及前端 `types.ts` 三处同源：
+    载荷字段与 `app/schemas/auth.py::JwtPayload` 及前端 `types.ts` 三处同源：
         `sub` 用户 id 的**字符串**形式（JWT 规范要求 sub 为字符串）
         `ver` 签发瞬间的 `users.token_version` 快照（改密后立即失效的依据）
         `jti` Token 唯一标识（登出时拉黑的键）

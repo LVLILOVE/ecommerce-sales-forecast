@@ -98,7 +98,7 @@ async def create_prediction(
        超预算**不**返回 502/504，而是 `code: 0` + `data.status = "failed"`
        + `data.error_code = "E_TIMEOUT"` + 三条建议（`API-12-2`）。
 
-    🔒 `granularity` 的取值约束由 `CreateTaskRequest`（`code/backend/schemas.py`）
+    🔒 `granularity` 的取值约束由 `CreateTaskRequest`（`app/schemas/task.py`）
        在解析阶段强制 —— 传 `sku` 等值会走统一参数异常处理器返回 `40012`，
        与 §5.6 错误码表一致。**刻意不在本函数里再判一次**：那会让
        「同一约束两处实现、两处可各自漂移」，正是本项目要避免的形态。

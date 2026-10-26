@@ -55,10 +55,33 @@ def read(rel: str) -> str:
     return p.read_text(encoding="utf-8")
 
 
+def strip_docstrings(src: str) -> str:
+    """剥离 docstring 与注释，只留可执行代码。
+
+    🔒 这是判「有没有做某个操作」的前提：`_metric_bundle` 的 docstring 里
+       写着「接口层一旦 `round()`…就…」，那是**解释为什么不这么做**，
+       却被朴素的子串搜索判成了「做了 round()」。同理 `_coverage` 的注释里
+       提到 `count_by_level`（说明为什么不用它）也会被误判。
+
+    ⚠️ 必须同时处理 **JS/TS 的块注释**（斜杠星号 … 星号斜杠）——
+       前端源文件普遍用 JSDoc 写模块头说明（`ResultPage.tsx` 就在注释里写了
+       「与 outputs/eval_report.json 同源」）。只剥三引号与井号的话，
+       前端文件等于没剥，判据必然误报。
+    """
+    out = re.sub(r"/\*[\s\S]*?\*/", "", src)             # JS/TS 块注释
+    out = re.sub(r'"""[\s\S]*?"""', "", out)             # docstring
+    out = re.sub(r"'''[\s\S]*?'''", "", out)
+    out = re.sub(r"(?m)^\s*#.*$", "", out)                # 整行注释
+    out = re.sub(r"\s+//.*$", "", out, flags=re.M)        # 行尾 //
+    out = re.sub(r"\s+#.*$", "", out, flags=re.M)         # 行尾 #
+    return out
+
+
 # =============================================================================
 section("① WS-6-05~07 后端：三个接口已实现且契约齐全")
 # =============================================================================
 routes = read("app/api/v1/predictions.py")
+routes_code = strip_docstrings(routes)   # 判「有没有做某操作」前先剥 docstring（§七.2）
 check("API-14 路由 GET /{task_id}", '@router.get(\n    "/{task_id}",' in routes)
 check("API-15 路由 /{task_id}/detail", '"/{task_id}/detail"' in routes)
 check("API-16 路由 /{task_id}/export", '"/{task_id}/export"' in routes)
@@ -69,7 +92,12 @@ check("🔒 API-16 用 CurrentUser（导出必须登录）",
 check("API-15 明细独立成接口（不并入 API-14）",
       'Paginated[PredictionRow]' in routes)
 check("🔒 API-16 文件名双写 filename*=UTF-8''",
-      "filename*=UTF-8''" in routes and "quote(name" in routes)
+      "filename*=UTF-8''" in routes_code and "quote(" in routes_code,
+      # 原判据是 `"quote(name" in routes`：既**依赖变量名**（实现里叫 `quoted`，
+      # 改名即误报），又**没剥 docstring**（本函数上方那段说明里也有
+      # `filename*=UTF-8''`，注释单独就能让断言通过 → 假阳性）。
+      # 现改为：先剥 docstring，再要求「编码函数 + RFC 5987 写法」同时出现在**代码**里。
+      "期望代码中出现 quote(...) 与 filename*=UTF-8''（docstring 不计）")
 check("API-16 响应 no-store（明细数据不缓存）",
       '"Cache-Control": "no-store"' in routes)
 
@@ -96,26 +124,6 @@ def func_body(src: str, name: str) -> str:
     return src[m.start(): m.end() + (nxt.start() if nxt else len(src))]
 
 
-def strip_docstrings(src: str) -> str:
-    """剥离 docstring 与注释，只留可执行代码。
-
-    🔒 这是判「有没有做某个操作」的前提：`_metric_bundle` 的 docstring 里
-       写着「接口层一旦 `round()`…就…」，那是**解释为什么不这么做**，
-       却被朴素的子串搜索判成了「做了 round()」。同理 `_coverage` 的注释里
-       提到 `count_by_level`（说明为什么不用它）也会被误判。
-
-    ⚠️ 必须同时处理 **JS/TS 的块注释**（斜杠星号 … 星号斜杠）——
-       前端源文件普遍用 JSDoc 写模块头说明（`ResultPage.tsx` 就在注释里写了
-       「与 outputs/eval_report.json 同源」）。只剥三引号与井号的话，
-       前端文件等于没剥，判据必然误报。
-    """
-    out = re.sub(r"/\*[\s\S]*?\*/", "", src)             # JS/TS 块注释
-    out = re.sub(r'"""[\s\S]*?"""', "", out)             # docstring
-    out = re.sub(r"'''[\s\S]*?'''", "", out)
-    out = re.sub(r"(?m)^\s*#.*$", "", out)                # 整行注释
-    out = re.sub(r"\s+//.*$", "", out, flags=re.M)        # 行尾 //
-    out = re.sub(r"\s+#.*$", "", out, flags=re.M)         # 行尾 #
-    return out
 
 
 # =============================================================================

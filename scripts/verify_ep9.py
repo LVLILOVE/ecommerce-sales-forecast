@@ -93,6 +93,7 @@ CHAIN: list[tuple[str, str, str]] = [
     ("verify_orm.py", "ORM 实体与 schema.sql 表结构对齐", "静态"),
     ("verify_schema.py", "数据库对象齐备性 + 游客态与外键完整性", "静态"),
     ("verify_schemas.py", "Pydantic 模型、格式约束与 bcrypt 72 字节边界", "静态"),
+    ("gen_backend_schemas.py", "R-08 生成件一致性：code/backend/schemas.py ↔ app/schemas/", "静态"),
     # ---- 前端静态守卫
     ("verify_types.mjs", "前端类型语法（node 直跑，不进浏览器）", "前端静态"),
     ("verify_tokens.py", "设计令牌 56 个 / oklch 取值", "前端静态"),
@@ -100,6 +101,7 @@ CHAIN: list[tuple[str, str, str]] = [
     # ---- 文档守卫
     ("verify_doc_refs.py", "文档交叉引用（PRD ↔ 技术文档 ↔ 实施方案）", "文档"),
     ("verify_doc_sql.py", "文档内嵌 SQL 与 DDL 一致", "文档"),
+    ("verify_timezone.py", "R-11 时区纪律：单时区假设（无 utcnow / DDL 必带 localtime）", "静态"),
     # ---- 认证（API-01~05）
     ("verify_auth.py", "认证与会话：Token 生命周期 / 越权 / 改密撤回", "API"),
     ("verify_register_rate.py", "R-07 注册限流：放行区 / 超限 / 先于 bcrypt 拒绝", "API"),
