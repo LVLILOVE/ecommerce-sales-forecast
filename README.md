@@ -22,13 +22,14 @@
 > 想免登录试用，请按 §四 本地运行并设 `ALLOW_GUEST=true`（默认值）。
 
 <details>
-<summary>⚠️ 在线地址打不开？三种替代方式</summary>
+<summary>⚠️ 在线地址打不开？几种替代方式</summary>
 
 在线环境是免费沙箱：**闲置会被缩容**，冷启动需 15–30 s。若等 60 s 仍无响应，改用下面任一种：
 
 | 方式 | 做法 | 能看到 |
 |---|---|---|
-| **静态原型** | clone 后双击 `prototype/index.html` | 13 个页面的完整视觉与交互（合成数据，零依赖） |
+| **静态原型（本机）** | clone 后双击 `prototype/index.html` | 13 个页面的完整视觉与交互（合成数据，零依赖） |
+| **静态原型（在线版）** | https://lvlilove.github.io/ecommerce-sales-forecast/ | 同上，**无需 clone**。<br>⚠️ `github.io` 在中国大陆常被间歇阻断（本机实测：同域 4 个边缘 IP 有 2 个 TCP 超时），打不开请用上一行 |
 | **本地完整运行** | §四「快速开始」：`pip install -r requirements.txt` + `npm run dev` | 全部功能，含真实 LSTM 推理 |
 | **截图与实测数据** | `docs/assets/readme/`、`outputs/` | 界面外观、验收截图、指标报告 |
 
