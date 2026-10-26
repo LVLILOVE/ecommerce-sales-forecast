@@ -9,6 +9,11 @@
   - 挂根路径 /health，不在 /api/v1 下。
   - 不做鉴权（否则监控系统无法调用）；不得泄露路径/配置/连接串（NFR-SEC-09）。
   - API-21-1：status = degraded 的判定 = 数据库异常 或 模型未加载。
+  - 🔴 **必须支持 `HEAD`**（2026-10-26 线上实测）：平台/面板的可用性预检与
+    链接预览普遍先发 `HEAD`。此前只注册了 GET ⇒ `HEAD /health` 返回 **405**，
+    而 405 会被上层误判成「服务不可用」，用户看到的是平台自己的 404 页。
+    加 `@router.head` 别名即可；`include_in_schema=False` 是为了**不改 OpenAPI**
+    （`verify_ep9_contract.py` 会核对 60 个操作，多一个 HEAD 操作会判定契约漂移）。
 =============================================================================
 """
 from __future__ import annotations
@@ -39,6 +44,7 @@ def _database_ok() -> bool:
         return False
 
 
+@router.head("/health", include_in_schema=False)
 @router.get("/health")
 def health() -> dict:
     """健康检查：返回结构符合技术文档 §5.8 响应体约定。"""

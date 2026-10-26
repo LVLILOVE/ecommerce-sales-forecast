@@ -237,7 +237,14 @@ if _FRONTEND_READY:
         name="frontend-assets",
     )
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    # 🔴 `methods` 必须含 **HEAD**（2026-10-26 线上实测）：平台/面板的可用性预检、
+    #    链接预览、部分爬虫都先发 `HEAD`。只注册 GET 时 `HEAD /` 返回 **405**，
+    #    上层会把 405 当成「服务不可用」并显示自己的 404 页 —— 表现是
+    #    「GET 明明 200，用户却看到 Not Found」，极难从我们自己的日志看出来。
+    #    `include_in_schema=False` 保持不变，OpenAPI 里不会多出这条兜底。
+    @app.api_route(
+        "/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False
+    )
     async def spa_fallback(full_path: str) -> FileResponse:  # pragma: no cover
         """SPA 兜底：未命中任何已注册路由的 GET 一律回 `index.html`。
 
