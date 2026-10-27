@@ -310,10 +310,17 @@ def _bump_unknown(email: str, max_fail: int, lock_seconds: int) -> int:
 
     达到 `max_fail` 时写入冷却并把计数归零（与真实用户路径一致：
     冷却结束后重新计 3 次），但调用方拿到的仍是「这是第几次失败」的语义值。
+
+    🔴 **条目数上界**（2026-10-26 复评修复）：本字典的键是「被爆破的未知邮箱」，
+    上界就是攻击者愿意尝试的邮箱数 —— 随机邮箱持续打登录即可让它单调增长
+    （每条约 100 字节），长期运行构成内存泄漏。
+    对照同文件的 `_REG_ATTEMPTS` 早就有 4096 的上界防御，这里补齐同一条。
     """
     with _UNKNOWN_LOCK:
         count, _ = _UNKNOWN_FAIL.get(email, (0, None))
         count += 1
+        if len(_UNKNOWN_FAIL) > 4096:
+            _UNKNOWN_FAIL.clear()
         if count >= max_fail:
             _UNKNOWN_FAIL[email] = (0, _now() + timedelta(seconds=lock_seconds))
         else:

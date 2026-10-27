@@ -118,6 +118,12 @@ async def create_prediction(
         ip=_client_ip(request),
     )
 
+    # 🔴 写进 `request.state`，访问日志才能按 `task_id` / `user_id` 串起链路
+    #    （`C-11`：旧访问日志只有 method/path/status/elapsed 四个字段，
+    #    排查「某个 task 为什么慢」要跨两个日志源做字符串匹配）。
+    request.state.task_id = payload.get("task_id")
+    request.state.user_id = user_id
+
     # ⚠️ `message` 必须随 `status` 变化：`code` 恒为 0（`API-12-2` 的硬要求），
     #    若 `message` 恒为「预测完成」，软失败时前端会先弹一条成功提示
     #    再跳失败卡 —— 用户看到的是自相矛盾的两个结论。
@@ -253,6 +259,7 @@ async def prediction_detail(
 async def prediction_export(
     task_id: int,
     q: Annotated[ExportQuery, Query()],
+    request: Request,
     user: CurrentUser,
     db: DbSession,
 ) -> Response:
@@ -274,8 +281,12 @@ async def prediction_export(
        `Content-Disposition` 依然足以触发浏览器下载。
     """
     spec = await run_in_threadpool(
-        result_service.prepare_export, db, task_id, user_id=user.id, fmt=q.format
+        result_service.prepare_export, db, task_id,
+        user_id=user.id, fmt=q.format, ip=_client_ip(request),
     )
+    # 🔴 同上：让访问日志带上 `task_id` / `user_id`（`C-11`）
+    request.state.task_id = task_id
+    request.state.user_id = user.id
     ascii_fallback = f"task_{task_id}_export.{spec.suffix}"
     quoted = quote(spec.name, safe="")
     return StreamingResponse(

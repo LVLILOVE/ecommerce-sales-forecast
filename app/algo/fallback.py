@@ -75,7 +75,15 @@ def l2_forecast(
     }
 
 
-def l3_forecast(df: pd.DataFrame, sku: str, warehouse: str) -> tuple[None, dict]:
+def l3_forecast(
+    df: pd.DataFrame,
+    sku: str,
+    warehouse: str,
+    *,
+    series_values: np.ndarray | None = None,
+    item_values: np.ndarray | None = None,
+    global_values: np.ndarray | None = None,
+) -> tuple[None, dict]:
     """L3 兜底：**不输出数值预测**，只给历史均值。
 
     🔒 这里必须返回 None，不能"给个大概数让它看起来完整"。
@@ -86,23 +94,39 @@ def l3_forecast(df: pd.DataFrame, sku: str, warehouse: str) -> tuple[None, dict]
         该仓自身历史 → 该商品跨仓历史 → 全局历史
     因为 L3 的典型场景就是"这个仓根本没有数据"，
     此时连它自己都没有均值，退到商品级才能给出有意义的参考。
+
+    🔴 **三个 `*_values` 参数是性能逃生口**（2026-10-26 复评修复）：
+    默认路径会对 `df` 做**两次全表布尔筛选**（序列级 + 商品级），
+    1000 条序列 × 50 万行 ⇒ 实测约 74 秒，而且它发生在预算检查点之后
+    ⇒ 60 秒端到端承诺被这一处单独架空。
+    调用方（`predict_service._build_prediction_rows`）用 `groupby`
+    一次建好索引后，把三个数组传进来即可 —— **口径与原实现逐字等价**。
     """
-    sub = df[(df[C.COL_SKU] == sku) & (df[C.COL_WAREHOUSE] == warehouse)]
-    vals = sub[C.COL_SALES].to_numpy(dtype=float) if not sub.empty else np.array([])
-    vals = vals[~np.isnan(vals)]
+    if series_values is not None:
+        vals = series_values
+    else:
+        sub = df[(df[C.COL_SKU] == sku) & (df[C.COL_WAREHOUSE] == warehouse)]
+        vals = sub[C.COL_SALES].to_numpy(dtype=float) if not sub.empty else np.array([])
+        vals = vals[~np.isnan(vals)]
 
     source = "warehouse"
     if vals.size == 0:
         # 本仓无历史 → 退到该商品跨仓历史（L3 最常见的情形）
-        item_vals = df[df[C.COL_SKU] == sku][C.COL_SALES].to_numpy(dtype=float)
-        item_vals = item_vals[~np.isnan(item_vals)]
+        if item_values is not None:
+            item_vals = item_values
+        else:
+            item_vals = df[df[C.COL_SKU] == sku][C.COL_SALES].to_numpy(dtype=float)
+            item_vals = item_vals[~np.isnan(item_vals)]
         if item_vals.size:
             vals = item_vals
             source = "item"
     if vals.size == 0:
         # 该商品完全无历史 → 退到全局（仅作极粗参考）
-        g = df[C.COL_SALES].to_numpy(dtype=float)
-        g = g[~np.isnan(g)]
+        if global_values is not None:
+            g = global_values
+        else:
+            g = df[C.COL_SALES].to_numpy(dtype=float)
+            g = g[~np.isnan(g)]
         if g.size:
             vals = g
             source = "global"

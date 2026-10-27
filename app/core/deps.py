@@ -207,6 +207,12 @@ def _guest_fallback() -> int:
     `ALLOW_GUEST=false` 后的效果：游客桶里**只剩系统示例数据**，
     「匿名共享」回归它本来的语义，**且不需要逐个改 10 处接口签名**。
 
+    🔴 **这个保证已在 2026-10-26 复评中落地**（`dataset_service
+    .assert_dataset_readable` 的游客分支现在只对 `is_sample=1` 的
+    系统示例数据无条件放行，游客上传的真实数据只对同为游客的调用者可见）。
+    改这里之前它只是一句**没有实现的承诺** —— 任何注册用户都能读到
+    任意游客上传的真实销售数据。
+
     :return: `GUEST_USER_ID`（默认）—— 或抛 `40101`（`ALLOW_GUEST=false`）
     """
     if not config.settings.allow_guest:

@@ -173,6 +173,31 @@ _TIMEOUT_SUGGESTIONS: tuple[str, ...] = (
 # 此处只取别名，避免三处各写一遍 (7, 14, 30) 后各自漂移。
 _ALLOWED_HORIZONS: tuple[int, ...] = algo_config.HORIZONS
 
+
+class _DeadlineExceeded(Exception):
+    """端到端预算已耗尽（`BE-16` 的编排层软失败信号）。
+
+    🔴 **为什么是异常而不是返回值**（2026-10-26 复评修复）：
+    之前唯一的 deadline 检查点在**两遍流水线跑完之后**（`predict_service._execute`），
+    于是超预算是**事后**才发现的 —— `_run_pipeline` 内部全程不查，
+    最大合法负载（1000 序列 × h=30）能实打实跑 **213 秒**。
+    而 `BE-16`（开发技术文档 §4.2）早就写明正确做法是
+    「**在编排层做软失败**，`predict_service` 内部维护 deadline，
+    在**每个阶段结束时检查**」—— 实现没跟上文档。
+
+    用异常是为了能**从任意深度的调用栈里中断**（阶段边界在 `_run_pipeline` 内部，
+    而 `_fail()` 需要 `db`/`task`/`prog` 这些外层上下文）。
+    它会被 `create_and_run` 捕获并转成 `E_TIMEOUT` 软失败，
+    **不会**冒泡成 HTTP 500（`API-12-2` 明确禁止 502/504）。
+    """
+
+
+def _check_deadline(deadline: float, prog: "_Progress") -> None:
+    """阶段边界检查预算。超了就抛 `_DeadlineExceeded`（由上层转软失败）。"""
+    if time.perf_counter() > deadline:
+        raise _DeadlineExceeded(prog.stage)
+
+
 # 单条日志/说明的最大长度，避免把整表数据写进审计字段
 _NOTE_MAX = 500
 
@@ -368,6 +393,24 @@ def create_and_run(
         )
     except BizError:
         raise
+    except _DeadlineExceeded:
+        # 🔴 `BE-16` / `API-12-2`：超预算是**软失败**，不是 HTTP 500/504。
+        #    阶段边界检查（`_check_deadline`）抛出的信号在这里落地：
+        #    写 `status=failed` + `error_code=E_TIMEOUT` + 给出三条处置建议。
+        logger.warning(
+            "预测任务超预算 task_id=%s stage=%s elapsed_ms=%s",
+            task.id, prog.stage, int((time.perf_counter() - t_all) * 1000),
+        )
+        payload = _fail(
+            db, task=task, prog=prog, error_code=E_TIMEOUT,
+            error_msg=(
+                f"端到端耗时超过预算 {_budget_text()}"
+                f"（已完成阶段：{STAGE_LABELS.get(prog.stage, prog.stage)}）"
+            ),
+            completed_stage=prog.stage,
+            duration_ms=int((time.perf_counter() - t_all) * 1000),
+            user_id=user_id, ip=ip, extra={"suggestions": list(_TIMEOUT_SUGGESTIONS)},
+        )
     except Exception as exc:  # noqa: BLE001 - 兜底转软失败，绝不让原始 500 外泄
         logger.exception("预测任务执行失败 task_id=%s", task.id)
         payload = _fail(
@@ -444,6 +487,10 @@ def _execute(
 
     # ---------- 落库：predictions（批量，`NFR-REL-04`）----------
     rows = _build_prediction_rows(task.id, fore, df, horizon)
+    # 🔴 构建预测行是**第二贵**的一步（逐序列取历史算基线），
+    #    必须在它**之后**再查一次预算：否则这一步自己就能吃掉几十秒，
+    #    而任务仍会被标记 succeeded —— 60 秒承诺再次落空。
+    _check_deadline(deadline, prog)
     written = prediction_dao.bulk_insert(db, rows)
 
     # ---------- 落库：metrics ----------
@@ -552,6 +599,9 @@ def _run_pipeline(
             device=device,
         )
         back = algo_infer.run_inference(df, backtest=True, **common)
+        # 🔴 两遍之间必须查预算：回测遍与预测遍各占约一半耗时，
+        #    第一遍跑完就超了却还要跑第二遍，等于把 60 秒承诺架空一倍。
+        _check_deadline(deadline, prog)
         fore = algo_infer.run_inference(df, backtest=False, **common)
         return back, fore
 
@@ -579,7 +629,15 @@ def _run_pipeline(
         #    `prog` 才是"已降级"的真实状态；写在重跑之后会得到
         #    「在 cuda 上失败了」这种与事实相反的记录。
         prog.device, prog.device_fallback = device, fallback
+        # 🔴 CPU 回退后耗时约 ×4.3 ⇒ 很可能此时预算已耗尽。
+        #    不查就再跑一遍，等于把「60 秒」这个承诺彻底架空。
+        _check_deadline(deadline, prog)
         back, fore = _once(device)
+
+    # 🔴 `BE-16`：**每个阶段结束时检查预算**。这是 60 秒硬约束真正生效的地方 ——
+    #    之前唯一的检查点在两遍流水线跑完之后（事后才发现），最大合法负载
+    #    （1000 序列 × h=30）能实打实跑 213 秒。
+    _check_deadline(deadline, prog)
 
     prog.device = device
     prog.device_fallback = fallback
@@ -837,10 +895,24 @@ def _build_prediction_rows(
     rows: list[dict[str, Any]] = []
     horizon_dates = _horizon_dates(df, horizon)
 
+    # 🔴 **一次建索引，不要每条序列扫一遍全表**（2026-10-26 复评修复）：
+    #    原实现对每条序列都执行一次 `df[(df[sku]==..) & (df[wh]==..)]`
+    #    —— 1000 条序列 × 50 万行 = 5 亿次单元比较，**实测外推约 74 秒**，
+    #    而且它发生在预算检查点之后 ⇒ 60 秒承诺被这一处单独架空。
+    #    改成 `groupby` 一次建索引后，复杂度降到 O(行数 + 序列数)。
+    groups = _series_index(df)
+    item_groups = _item_index(df)
+    global_values = _global_values(df)
+
     for rec in result.records:
         if rec.level == "L3" or not rec.forecast:
             # L3：只落一行历史均值（占位 + 降级标记），不参与数值预测展示
-            _none, note = algo_fallback.l3_forecast(df, rec.sku, rec.warehouse)
+            _none, note = algo_fallback.l3_forecast(
+                df, rec.sku, rec.warehouse,
+                series_values=_series_values(df, rec.sku, rec.warehouse, groups=groups),
+                item_values=item_groups.get(rec.sku),
+                global_values=global_values,
+            )
             mean = note.get("historical_mean")
             rows.append({
                 "task_id": task_id,
@@ -856,7 +928,7 @@ def _build_prediction_rows(
             })
             continue
 
-        vals = _series_values(df, rec.sku, rec.warehouse)
+        vals = _series_values(df, rec.sku, rec.warehouse, groups=groups)
         base = algo_metrics.moving_average_forecast(
             vals, horizon, algo_config.BASELINE_WINDOW
         )
@@ -887,15 +959,79 @@ def _horizon_dates(df: pd.DataFrame, horizon: int) -> list[str]:
     return [(last + pd.Timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(horizon)]
 
 
-def _series_values(df: pd.DataFrame, sku: str, warehouse: str) -> Any:
-    """某条序列的有效历史（去 NaN），用于算未来窗口的移动平均基线。"""
+def _series_index(df: pd.DataFrame) -> dict[tuple[str, str], Any]:
+    """一次 `groupby` 建好「序列 → 该序列的 DataFrame」索引。
+
+    🔴 这是 `_build_prediction_rows` 性能修复的核心（2026-10-26）。
+    旧实现每条序列都做一次全表布尔筛选，1000 序列 × 50 万行 ⇒ 约 74 秒。
+    这里**一次**分组，之后每条序列只做一次字典查找。
+
+    口径与旧实现**逐字等价**：先按 `(sku, warehouse)` 分组，
+    组内再按日期升序，取 `sales` 列、去掉 NaN。
+    """
+    from app.algo import config as algo_config
+
+    out: dict[tuple[str, str], Any] = {}
+    if df is None or df.empty:
+        return out
+    for (sku, warehouse), grp in df.groupby(
+        [algo_config.COL_SKU, algo_config.COL_WAREHOUSE], sort=False
+    ):
+        out[(str(sku), str(warehouse))] = grp.sort_values(algo_config.COL_DATE)
+    return out
+
+
+def _item_index(df: pd.DataFrame) -> dict[str, Any]:
+    """一次 `groupby` 建好「商品 → 跨仓历史销量数组」索引（L3 降级用）。"""
     import numpy as np
 
     from app.algo import config as algo_config
 
-    sub = df[
-        (df[algo_config.COL_SKU] == sku) & (df[algo_config.COL_WAREHOUSE] == warehouse)
-    ].sort_values(algo_config.COL_DATE)
+    out: dict[str, Any] = {}
+    if df is None or df.empty:
+        return out
+    for sku, grp in df.groupby(algo_config.COL_SKU, sort=False):
+        vals = grp[algo_config.COL_SALES].to_numpy(dtype=float)
+        out[str(sku)] = vals[~np.isnan(vals)]
+    return out
+
+
+def _global_values(df: pd.DataFrame) -> Any:
+    """全表销量数组（L3 的最后一级兜底：全局历史均值）。"""
+    import numpy as np
+
+    from app.algo import config as algo_config
+
+    if df is None or df.empty:
+        return np.asarray([], dtype=float)
+    vals = df[algo_config.COL_SALES].to_numpy(dtype=float)
+    return vals[~np.isnan(vals)]
+
+
+def _series_values(
+    df: pd.DataFrame,
+    sku: str,
+    warehouse: str,
+    *,
+    groups: dict[tuple[str, str], Any] | None = None,
+) -> Any:
+    """某条序列的有效历史（去 NaN），用于算未来窗口的移动平均基线。
+
+    :param groups: `_series_index()` 的结果。**传了就走字典查找（O(1)）**，
+        不传则退回旧的布尔筛选（等价，但 O(行数)）。
+    """
+    import numpy as np
+
+    from app.algo import config as algo_config
+
+    if groups is not None:
+        sub = groups.get((sku, warehouse))
+        if sub is None:
+            return np.asarray([], dtype=float)
+    else:
+        sub = df[
+            (df[algo_config.COL_SKU] == sku) & (df[algo_config.COL_WAREHOUSE] == warehouse)
+        ].sort_values(algo_config.COL_DATE)
     vals = sub[algo_config.COL_SALES].to_numpy(dtype=float)
     return vals[~np.isnan(vals)]
 

@@ -57,8 +57,9 @@ from app.core.config import settings
 from app.core.db import EXPORT_TMP_DIR, SessionLocal
 from app.core.deps import GUEST_USER_ID
 from app.core.errors import BizError, ErrorCode
-from app.dao import dataset_dao, metric_dao, prediction_dao, task_dao
+from app.dao import dataset_dao, metric_dao, oplog_dao, prediction_dao, task_dao
 from app.models.metric import THRESHOLD_MAPE
+from app.models.operation_log import ACTION_EXPORT, RESULT_SUCCESS
 from app.services import dataset_service
 from app.validators import load_csv
 
@@ -427,8 +428,15 @@ def _series_curves(
     #    而对比页多条曲线叠在一起时历史段会完全重合（谁也看不清），
     #    且对比要回答的是「不同步长预测差多少」，历史段不参与这个问题。
     #    顺带把 4 个任务的 CSV 读取开销降为 0 —— 对比接口 ≤ 3 s 的关键。
+    # 🔴 **窗口取所有序列的最大值，不能取「第一条」的**（2026-10-26 复评修复）：
+    #    原实现是 `len(next(iter(rows.values()))["dates"])` —— 窗口长度取自
+    #    **第一条**序列，却套用到**所有**序列。而 L3 序列在 `predictions` 表里
+    #    只落 1 行（`dates` 长度为 1），于是只要排序最靠前的序列恰好是 L3
+    #    （排序按 `sku_id` 字典序 ⇒ 稀疏数据里很常见），
+    #    **整张结果图的历史实线段就塌成 1 个点** —— 前端连预测起点都标不出来。
+    #    正确口径：历史段长度与「预测段长度」对齐 ⇒ 取所有序列的最大值。
     history = {} if predicted_only else _series_history(
-        db, task, set(rows), len(next(iter(rows.values()))["dates"])
+        db, task, set(rows), max((len(seg["dates"]) for seg in rows.values()), default=0)
     )
     curves: list[dict[str, Any]] = []
     for (sku, warehouse), seg in rows.items():
@@ -664,12 +672,21 @@ def prepare_export(
     *,
     user_id: int,
     fmt: str = "csv",
+    ip: str | None = None,
 ) -> ExportSpec:
     """校验归属与任务状态，返回导出描述（**不生成内容**）。
 
     🔒 **导出要求登录**（`FR-USR-08` / `JT-10`）：游客能看结果页，
        但不能把数据带走。调用方必须用 `CurrentUser` 而非 `OptionalUserId`。
     🔒 **列序固定**（`UX-P08-08`），见 `EXPORT_HEADER` 注释。
+
+    🔴 **导出必须留痕**（`FR-SYS-03` 的第 4 类操作，2026-10-26 复评修复）：
+       `ACTION_EXPORT` 常量与 schema 的 CHECK 约束**早就存在**，
+       管理端筛选白名单也列了它 —— 但**没有任何代码路径写入它**。
+       结果是「数据被下载走」这件事在审计表里完全不可见
+       （实测 `operation_logs` 的 action 分布里根本没有 `export`）。
+       审计点选在这里（请求被受理 = 数据离开系统的起点），
+       而不是流式响应的生成器里 —— 后者要另开 Session，且中断时反而丢记录。
     """
     task = _owned_task(db, task_id, user_id)
     _require_succeeded(task)
@@ -678,6 +695,17 @@ def prepare_export(
     total_rows = prediction_dao.count_by_task(db, task_id)
     dump = total_rows * 160 >= EXPORT_DUMP_THRESHOLD_BYTES
     name = f"{EXPORT_FILENAME_PREFIX}_{task_id}_{datetime.now():%Y%m%d%H%M%S}.{fmt}"
+
+    oplog_dao.record(
+        db,
+        action=ACTION_EXPORT,
+        result=RESULT_SUCCESS,
+        user_id=user_id,
+        target_id=task_id,
+        detail=f"fmt={fmt};rows={total_rows};dump={int(dump)}",
+        ip=ip,
+    )
+    db.commit()
 
     if fmt == "xlsx":
         path = _write_xlsx_to_disk(db, task_id, name if dump else None)

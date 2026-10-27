@@ -769,8 +769,21 @@ def main() -> int:  # noqa: C901 - 校验脚本，线性铺开比拆函数更好
         check("🔒 用户 B 读用户 A 的预览 → 40301", res.json()["code"] == 40301)
         res = client.get(f"/api/v1/datasets/{guest_ds.get('id')}",
                          headers={"Authorization": f"Bearer {token_b}"})
-        check("🔒 用户 B 读**游客**数据集 → 放行（BE-41 第一分支，FR-USR-08）",
-              res.json()["code"] == 0, str(res.json())[:200])
+        # 🔴 **口径变更（2026-10-27，C-07）**：本条原先断言「放行」。
+        #    那等于把「任意注册用户可读任意游客上传的真实销售数据」写进了验收标准 ——
+        #    攻击者只需注册一个普通账号即可遍历 dataset_id 抓取全部匿名流量。
+        #    `FR-USR-08` 说的是「游客可加载**示例数据**看完整结果」，
+        #    从未要求「游客上传的数据对所有人开放」；紧跟其上的
+        #    「用户 B 读用户 A 的数据 → 40301」也证明了隔离口径应当一致。
+        #    现在：只有 `is_sample=1` 的**系统示例数据**才无条件共享，
+        #    游客上传的数据仅对游客身份可见（见 dataset_service.assert_dataset_readable）。
+        check("🔒 用户 B 读**游客上传**的数据集 → 40301（收紧 C-07，原先误为放行）",
+              res.json()["code"] == 40301, str(res.json())[:200])
+        # 系统示例数据仍必须对任何调用者开放（`API-07` 共用一份，FR-USR-08）
+        sample_any = client.get("/api/v1/datasets/sample",
+                                headers={"Authorization": f"Bearer {token_b}"})
+        check("🔒 用户 B 可加载系统示例数据 → 放行（FR-USR-08，示例是公共资源）",
+              sample_any.json()["code"] == 0, str(sample_any.json())[:200])
         res = client.get("/api/v1/datasets/999999",
                          headers={"Authorization": f"Bearer {token_a}"})
         check("不存在的数据集 → 40402", res.json()["code"] == 40402, str(res.json())[:200])

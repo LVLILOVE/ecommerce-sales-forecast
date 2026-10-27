@@ -217,9 +217,38 @@ def assert_dataset_readable(dataset: Dataset, caller_id: int) -> None:
     """🔒 数据集读权限判定。**分支顺序不可交换。**
 
     :param caller_id: 当前调用者身份；游客为 `GUEST_USER_ID (0)`。
+
+    🔴 **游客桶只共享「系统示例数据」，不共享「游客上传的真实数据」**
+       （2026-10-26 复评修复）：
+       `user_id = 0` 是**所有游客共用的哨兵值**，不是「示例数据」标记。
+       原实现第一分支直接 `return`（注释原文「游客数据匿名共享，
+       任何调用者均可用」）⇒ **任意注册用户都能读到任意游客上传的
+       真实销售数据**（`API-09` 详情 / `API-10` 预览 / `API-11` 错误明细），
+       攻击者只要注册一个普通账号即可遍历 `dataset_id` 抓取全部匿名流量。
+
+       收紧后：
+       - `is_sample = 1`（系统示例数据）→ 对所有调用者放行（**公共示例**，
+         与 `API-07` 的「示例数据集不按用户复制、共用一份」一致）；
+       - `is_sample = 0` 且 `user_id = 0`（游客上传的真实数据）
+         → **仅游客身份可读**（`caller_id = 0`），已登录用户一律 403。
+
+       ⚠️ **游客之间仍然共享**：两个不同访客的 `caller_id` 都是 0，
+       匿名模式下没有别的手段区分他们。要彻底解决需要引入
+       **会话级游客身份**（改 schema + 前端 + 10 处接口签名），
+       属独立需求，不在本次修复范围。公开部署的正确做法是
+       `ALLOW_GUEST=false`（`deploy/.env` 已如此配置）——
+       那时游客请求直接 40101，这个桶根本不会产生新数据。
     """
     if dataset.user_id == GUEST_USER_ID:
-        return  # 游客数据匿名共享，任何调用者均可用（BE-41 第一分支）
+        if int(dataset.is_sample or 0) == 1:
+            return  # 系统示例数据：公共资源，任何调用者均可用
+        # 游客上传的真实数据：只给同为游客的调用者
+        if caller_id == GUEST_USER_ID:
+            return
+        raise BizError(
+            ErrorCode.FORBIDDEN,
+            "无权访问该数据集（游客上传的数据仅对游客可见，登录后请上传自己的数据）",
+        )
     if dataset.user_id != caller_id:
         raise BizError(ErrorCode.FORBIDDEN, "无权访问该数据集")
 
@@ -468,7 +497,9 @@ def _apply_interpolation(
     src = _abs(dataset)
     df, enc = load_csv(src)
     if not src.exists():
-        raise BizError(ErrorCode.IO_ERROR, "原始数据文件已丢失，请重新上传")
+        raise BizError(
+            ErrorCode.DATASET_NOT_FOUND, "原始数据文件已丢失，请重新上传"
+        )
 
     parsed = parse_dates(df[algo_config.COL_DATE])
     sales = pd.to_numeric(df[algo_config.COL_SALES], errors="coerce")
@@ -697,7 +728,9 @@ def get_detail(db: Session, *, dataset_id: int, user_id: int) -> dict[str, Any]:
     dataset = _load_readable(db, dataset_id, user_id)
     path = _abs(dataset)
     if not path.exists():
-        raise BizError(ErrorCode.IO_ERROR, "数据文件已丢失，请重新上传")
+        raise BizError(
+            ErrorCode.DATASET_NOT_FOUND, "数据文件已丢失，请重新上传"
+        )
 
     df, _enc = load_csv(path, None)
     df = df.assign(**{"_s": pd.to_numeric(df[algo_config.COL_SALES], errors="coerce")})
@@ -733,7 +766,9 @@ def get_preview(
     dataset = _load_readable(db, dataset_id, user_id)
     path = _abs(dataset)
     if not path.exists():
-        raise BizError(ErrorCode.IO_ERROR, "数据文件已丢失，请重新上传")
+        raise BizError(
+            ErrorCode.DATASET_NOT_FOUND, "数据文件已丢失，请重新上传"
+        )
 
     limit = max(1, min(int(limit), 100))
     df, _enc = load_csv(path, None)
