@@ -54,9 +54,21 @@ def call(method: str, path: str, *, body=None, token: str | None = None,
     args += ["--max-time", str(timeout), url]
 
     t0 = time.perf_counter()
-    try:
-        proc = subprocess.run(args, capture_output=True, timeout=timeout + 20)
-    except subprocess.TimeoutExpired:
+    proc = None
+    # 🔴 **本机代理会偶发 `CONNECT tunnel failed, response 502`**
+    #    （与 `git push` 同款抖动；直连 443 又不通），所以连接层失败要重试。
+    #    只重试「拿不到 HTTP 响应」的情况，**不重试**业务错误。
+    for attempt in range(3):
+        try:
+            proc = subprocess.run(args, capture_output=True, timeout=timeout + 20)
+        except subprocess.TimeoutExpired:
+            continue
+        if b"__HTTP__0" not in proc.stdout and b"\n__HTTP__" in proc.stdout:
+            break
+        if attempt < 2:
+            logger_note = f"重试 {attempt + 1}/3（连接层失败）"
+            print(f"        ↳ {logger_note}")
+    if proc is None:
         return 0, "请求超时"
     dt = (time.perf_counter() - t0) * 1000
     out = proc.stdout.decode("utf-8", "replace")
