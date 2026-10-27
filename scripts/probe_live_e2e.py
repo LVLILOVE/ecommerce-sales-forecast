@@ -183,6 +183,16 @@ def main() -> int:
     code, payload = call("GET", "/api/v1/history?page=1&size=10", token=token)
     step("查历史", code, payload, 0)
 
+    # 🔒 `FR-HIS-03`（P0）：历史记录导出 —— 与结果页导出**列定义完全一致**。
+    #    这条以前没有（后端无路由、前端无入口），是本轮补齐的新能力。
+    if task_id:
+        code, payload = call("GET", f"/api/v1/history/{task_id}/export", token=token)
+        ok = code == 200
+        print(f"[{'OK  ' if ok else 'FAIL'}] 历史记录导出: HTTP {code}")
+        if not ok:
+            _fails.append("历史记录导出")
+            print(f"        ↳ {str(payload)[:200]}")
+
     code, payload = call("GET", "/api/v1/users/me", token=token)
     step("个人资料", code, payload, 0)
 
