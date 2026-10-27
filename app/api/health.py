@@ -13,7 +13,8 @@
     链接预览普遍先发 `HEAD`。此前只注册了 GET ⇒ `HEAD /health` 返回 **405**，
     而 405 会被上层误判成「服务不可用」，用户看到的是平台自己的 404 页。
     加 `@router.head` 别名即可；`include_in_schema=False` 是为了**不改 OpenAPI**
-    （`verify_ep9_contract.py` 会核对 60 个操作，多一个 HEAD 操作会判定契约漂移）。
+    （`verify_ep9_contract.py` 会核对 OpenAPI 的 **32 个操作 / 30 条路径**，
+    多一个 HEAD 操作会判定契约漂移）。
 =============================================================================
 """
 from __future__ import annotations

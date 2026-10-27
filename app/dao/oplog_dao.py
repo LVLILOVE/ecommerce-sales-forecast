@@ -98,7 +98,15 @@ def count(
     action: str | None = None,
     result: str | None = None,
     user_id: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
 ) -> int:
+    """操作日志计数（管理端）。
+
+    🔴 **筛选参数必须与 `list_paged` 完全一致**（2026-10-26 复评修复）：
+    之前不接 `start`/`end`，于是「按时间窗筛选」时 `items` 已过滤、
+    `total` 却是全库条数 ⇒ 前端页数虚高、翻页空白。
+    """
     stmt = select(func.count()).select_from(OperationLog)
     if action:
         stmt = stmt.where(OperationLog.action == action)
@@ -106,6 +114,10 @@ def count(
         stmt = stmt.where(OperationLog.result == result)
     if user_id is not None:
         stmt = stmt.where(OperationLog.user_id == user_id)
+    if start:
+        stmt = stmt.where(OperationLog.created_at >= start)
+    if end:
+        stmt = stmt.where(OperationLog.created_at <= end)
     return int(db.execute(stmt).scalar_one())
 
 

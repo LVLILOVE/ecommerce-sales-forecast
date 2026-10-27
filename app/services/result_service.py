@@ -52,6 +52,7 @@ from typing import Any, Iterator
 
 from sqlalchemy.orm import Session
 
+from app.core import csv_safety
 from app.core.config import settings
 from app.core.db import EXPORT_TMP_DIR, SessionLocal
 from app.core.deps import GUEST_USER_ID
@@ -780,9 +781,13 @@ def _export_cells(p: Any) -> list[str]:
 
 
 def _csv_text(value: Any) -> str:
-    """文本单元格的 CSV 注入防护（见 `_CSV_UNSAFE_PREFIX`）。"""
-    text = "" if value is None else str(value)
-    return f"'{text}" if text[:1] in _CSV_UNSAFE_PREFIX else text
+    """文本单元格的 CSV 注入防护（见 `_CSV_UNSAFE_PREFIX`）。
+
+    🔴 实现已上收到 `app/core/csv_safety.py`：错误明细导出（`API-11`）
+    之前漏了这层防护，而它下载的同样是**用户上传的原始行** ——
+    威胁模型与结果导出完全相同。两处共用一份实现，才不会再次分叉。
+    """
+    return csv_safety.safe_text(value)
 
 
 def _write_xlsx_to_disk(db: Session, task_id: int, keep_name: str | None) -> Path:

@@ -364,7 +364,7 @@ def create_and_run(
         payload = _execute(
             db, task=task, dataset=dataset, handle=handle, prog=prog,
             horizon=horizon, use_holiday_feature=use_holiday_feature,
-            deadline=deadline, started=t_all, user_id=user_id,
+            deadline=deadline, started=t_all, user_id=user_id, ip=ip,
         )
     except BizError:
         raise
@@ -408,6 +408,7 @@ def _execute(
     deadline: float,
     started: float,
     user_id: int,
+    ip: str | None = None,
 ) -> dict[str, Any]:
     from app.algo import infer as algo_infer
 
@@ -438,7 +439,7 @@ def _execute(
             ),
             completed_stage=prog.stage,
             duration_ms=int((time.perf_counter() - started) * 1000),
-            user_id=user_id, extra={"suggestions": list(_TIMEOUT_SUGGESTIONS)},
+            user_id=user_id, ip=ip, extra={"suggestions": list(_TIMEOUT_SUGGESTIONS)},
         )
 
     # ---------- 落库：predictions（批量，`NFR-REL-04`）----------
@@ -491,7 +492,7 @@ def _execute(
         detail=(f"dataset={dataset.id};horizon={horizon};series={cov['total']};"
                 f"l1={cov['L1']};l2={cov['L2']};l3={cov['L3']};"
                 f"mape={metrics.weighted_mape:.2f};rows={written};ms={duration_ms}"),
-        ip=None,
+        ip=ip,
     )
     db.commit()
 
@@ -640,6 +641,7 @@ def _fail(
     completed_stage: str | None,
     duration_ms: int,
     user_id: int,
+    ip: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """标记任务失败并**正常返回**（`code: 0`）。
@@ -666,7 +668,7 @@ def _fail(
         target_id=task.id,
         detail=f"dataset={task.dataset_id};code={error_code};"
                f"stage={completed_stage};ms={duration_ms}",
-        ip=None,
+        ip=ip,
     )
     db.commit()
 

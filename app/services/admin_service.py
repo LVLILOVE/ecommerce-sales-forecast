@@ -524,7 +524,9 @@ def list_tasks(
     rows = task_dao.list_all(
         db, page=page, size=page_size, user_id=user_id, status=status, keyword=keyword
     )
-    total = task_dao.count_all(db, user_id=user_id, status=status)
+    total = task_dao.count_all(
+        db, user_id=user_id, status=status, keyword=keyword
+    )
     return {
         "items": _task_briefs(db, rows),
         "total": total,
@@ -816,7 +818,9 @@ def list_logs(
         start=start,
         end=end,
     )
-    total = oplog_dao.count(db, action=action, result=result, user_id=user_id)
+    total = oplog_dao.count(
+        db, action=action, result=result, user_id=user_id, start=start, end=end
+    )
     return {
         "items": [_log_brief(row) for row in rows],
         "total": total,

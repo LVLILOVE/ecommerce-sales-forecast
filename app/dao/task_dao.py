@@ -253,14 +253,25 @@ def list_all(
 
 
 def count_all(
-    db: Session, *, user_id: int | None = None, status: str | None = None
+    db: Session,
+    *,
+    user_id: int | None = None,
+    status: str | None = None,
+    keyword: str | None = None,
 ) -> int:
-    """全量任务计数（管理端）。**隔离红线例外。**"""
+    """全量任务计数（管理端）。**隔离红线例外。**
+
+    🔴 **筛选参数必须与 `list_all` 完全一致**（2026-10-26 复评修复）：
+    之前 `count_all` 不接 `keyword`，于是「按关键字搜索」时 `items` 已过滤、
+    `total` 却是全库条数 ⇒ 前端算出的页数虚高，用户翻页看到连续空白页。
+    """
     stmt = select(func.count()).select_from(Task)
     if user_id is not None:
         stmt = stmt.where(Task.user_id == user_id)
     if status is not None:
         stmt = stmt.where(Task.status == status)
+    if keyword:
+        stmt = stmt.where(Task.task_name.like(f"%{keyword}%"))
     return int(db.execute(stmt).scalar_one())
 
 

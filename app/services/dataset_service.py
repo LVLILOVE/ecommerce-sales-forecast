@@ -74,6 +74,7 @@ from app.algo import config as algo_config
 from app.algo.classify import classify_series, count_levels
 from app.algo.preprocess import interpolate_series
 from app.core import config as app_config
+from app.core import csv_safety
 from app.core.db import EXPORT_TMP_DIR, UPLOAD_DIR
 from app.core.errors import BizError, ErrorCode
 from app.dao import dataset_dao, oplog_dao
@@ -782,7 +783,15 @@ def _write_error_detail(
         writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for row in rows[:MAX_ERROR_ROWS_EXPORT]:
-            writer.writerow({k: row.get(k, "") for k in fieldnames})
+            # 🔴 CSV 注入防护：这里下载的是**用户上传的原始行**（含原始
+            #    `sku_id`），威胁模型与结果导出（API-16）完全相同 ——
+            #    之前只有 API-16 做了防护，这里漏了。统一走 `core.csv_safety`。
+            #    数值列（`sales`）**不转义**，否则 `-12` 会变成 `'-12`。
+            writer.writerow(
+                csv_safety.escape_row(
+                    row, fieldnames, numeric_columns=(algo_config.COL_SALES,)
+                )
+            )
     prune_error_details()
     return target
 
