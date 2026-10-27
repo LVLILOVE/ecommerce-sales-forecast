@@ -52,6 +52,7 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from app.api.v1._download import export_response
 from app.core.deps import CurrentUser, DbSession, OptionalUserId
 from app.schemas import (
     ApiResponse,
@@ -287,16 +288,6 @@ async def prediction_export(
     # 🔴 同上：让访问日志带上 `task_id` / `user_id`（`C-11`）
     request.state.task_id = task_id
     request.state.user_id = user.id
-    ascii_fallback = f"task_{task_id}_export.{spec.suffix}"
-    quoted = quote(spec.name, safe="")
-    return StreamingResponse(
-        result_service.iter_export_chunks(spec),
-        media_type=spec.mime,
-        headers={
-            "Content-Disposition": (
-                f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quoted}"
-            ),
-            # 🔒 导出含明细数据，禁止任何中间层缓存
-            "Cache-Control": "no-store",
-        },
-    )
+    # 📌 响应头构造抽到 `_download.export_response()`，与历史导出（`API-19a`）共用 ——
+    #    文件名双写 / 不设 Content-Length / no-store 三条细节只有一处实现。
+    return export_response(spec, task_id)

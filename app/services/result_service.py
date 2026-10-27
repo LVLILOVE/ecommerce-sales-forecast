@@ -57,7 +57,12 @@ from app.core.config import settings
 from app.core.db import EXPORT_TMP_DIR, SessionLocal
 from app.core.deps import GUEST_USER_ID
 from app.core.errors import BizError, ErrorCode
-from app.dao import dataset_dao, metric_dao, oplog_dao, prediction_dao, task_dao
+from app.dao import dataset_dao, event_dao, metric_dao, oplog_dao, prediction_dao, task_dao
+from app.models.event_names import (
+    EV_VIS_01_RESULT_VIEW,
+    EV_VIS_02_RESULT_EXPORT,
+    EV_VIS_03_COVERAGE_VIEW,
+)
 from app.models.metric import THRESHOLD_MAPE
 from app.models.operation_log import ACTION_EXPORT, RESULT_SUCCESS
 from app.services import dataset_service
@@ -235,6 +240,30 @@ def get_result(
     # 🔒 `API-14-3`：`truncated` 让前端能诚实告知「只画了前 N 条」，
     #    而不是让用户以为「只有这 50 条序列」。
     payload["truncated"] = truncated
+
+    # ---- 埋点（`FR-ADM-01`）----
+    # 🔴 **为什么由 GET 接口代理前端曝光事件**：本项目没有「前端直接写库」的通道
+    #    （也不该有 —— 那等于给客户端开一个任意写入口）。`EV-VIS-01`（结果页曝光）
+    #    与 `EV-VIS-03`（覆盖率面板曝光）与「读结果」在这个应用里是**同一个动作**：
+    #    覆盖率面板是结果页的固定区块，不存在"看了结果但没看覆盖率"的路径。
+    #    `EV-VIS-03` 只额外要求 `l3_ratio > 0` —— 用户看到"有不可预测部分"时才有信息量。
+    cov = payload["coverage"] or {}
+    l3 = int(cov.get("L3") or 0)
+    total = int(cov.get("total") or 0)
+    event_dao.record_safe(
+        db, event_name=EV_VIS_01_RESULT_VIEW, user_id=user_id, task_id=task_id,
+        properties={
+            "task_id": task_id,
+            "weighted_mape": (payload["metrics"] or {}).get("mape"),
+            "is_warning_shown": bool(payload["is_over_threshold"]),
+        },
+    )
+    if total > 0 and l3 > 0:
+        event_dao.record_safe(
+            db, event_name=EV_VIS_03_COVERAGE_VIEW, user_id=user_id, task_id=task_id,
+            properties={"task_id": task_id, "l3_ratio": round(l3 / total, 4)},
+        )
+    db.commit()
     return payload
 
 
@@ -704,6 +733,11 @@ def prepare_export(
         target_id=task_id,
         detail=f"fmt={fmt};rows={total_rows};dump={int(dump)}",
         ip=ip,
+    )
+    # `EV-VIS-02`（`FR-ADM-01`）：结果导出 —— 衡量导出功能使用率。
+    event_dao.record_safe(
+        db, event_name=EV_VIS_02_RESULT_EXPORT, user_id=user_id, task_id=task_id,
+        properties={"task_id": task_id, "format": fmt, "rows": total_rows},
     )
     db.commit()
 

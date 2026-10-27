@@ -38,6 +38,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from datetime import datetime, timedelta
@@ -47,7 +48,12 @@ from sqlalchemy.orm import Session
 
 from app.core import config, security
 from app.core.errors import BizError, ErrorCode
-from app.dao import oplog_dao, token_dao, user_dao
+from app.dao import event_dao, oplog_dao, token_dao, user_dao
+from app.models.event_names import (
+    EV_AUTH_01_REGISTER,
+    EV_AUTH_02_LOGIN,
+    EV_AUTH_03_LOGIN_FAIL,
+)
 from app.models.operation_log import RESULT_FAIL, RESULT_SUCCESS
 from app.models.user import User
 
@@ -191,6 +197,11 @@ def register(
         ) from None
 
     _record(db, action="register", user_id=user.id, target_id=user.id, ip=ip)
+    # `EV-AUTH-01`（`FR-ADM-01`）：注册成功。埋点失败只记日志，不阻塞注册。
+    event_dao.record_safe(
+        db, event_name=EV_AUTH_01_REGISTER, user_id=user.id,
+        properties={"channel": "email"},
+    )
     logger.info("注册成功 user_id=%s email=%s", user.id, email)
     return user
 
@@ -385,6 +396,16 @@ def login(
             fail_no = _bump_unknown(email, max_fail, lock_seconds)
 
         _record(db, action="login", result=RESULT_FAIL, user_id=None, detail=f"email={email}", ip=ip)
+        # `EV-AUTH-03`（`FR-ADM-01`）：登录失败。
+        # ⚠️ 写 `email_hash` 而不是明文邮箱 —— PRD 的字段定义就是这样，
+        #    而且失败事件里塞明文邮箱等于给埋点表开了个"邮箱枚举"后门。
+        event_dao.record_safe(
+            db, event_name=EV_AUTH_03_LOGIN_FAIL,
+            properties={
+                "email_hash": hashlib.sha256(email.encode()).hexdigest()[:16],
+                "reason": "unknown_email" if user is None else "bad_password",
+            },
+        )
 
         # 🔒🔒 必须在抛错**之前**显式提交（技术文档 `BE-17` 的例外场景）：
         #   `get_db` 的契约是「异常 → rollback」。若这里直接 raise，
@@ -444,6 +465,11 @@ def login(
 
     token, expires_in = security.create_access_token(user.id, user.token_version)
     _record(db, action="login", user_id=user.id, target_id=user.id, ip=ip)
+    # `EV-AUTH-02`（`FR-ADM-01`）：登录成功。与上面的审计同一事务提交。
+    event_dao.record_safe(
+        db, event_name=EV_AUTH_02_LOGIN, user_id=user.id,
+        properties={"success": True},
+    )
     logger.info("登录成功 user_id=%s email=%s", user.id, email)
 
     # 刷新 ORM 对象，使响应里的 last_login_at / fail_count 为最新值

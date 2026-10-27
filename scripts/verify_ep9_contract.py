@@ -442,6 +442,7 @@ EXPECTED_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/v1/history"),
     ("GET", "/api/v1/history/dashboard"),
     ("POST", "/api/v1/history/compare"),
+    ("GET", "/api/v1/history/{}/export"),
     ("GET", "/api/v1/history/{}"),
     ("DELETE", "/api/v1/history/{}"),
     # ---- API-21 健康检查（1）—— ★ 挂在**根路径**，不在 `/api/v1` 下

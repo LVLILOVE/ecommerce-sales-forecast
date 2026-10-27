@@ -136,6 +136,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -186,6 +202,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -233,6 +265,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -314,6 +362,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -363,6 +427,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -423,6 +503,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -492,6 +588,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -584,6 +696,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -643,6 +771,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -673,7 +817,7 @@
           "predictions"
         ],
         "summary": "创建预测任务",
-        "description": "创建并**同步执行**预测任务（`FR-MOD-07` ~ `FR-MOD-13`）。\n\n🔒 耗时预算 ≤ 60 s（`NFR-PERF-01`），`EP-5` 本机实测约 20 s。\n   超预算**不**返回 502/504，而是 `code: 0` + `data.status = \"failed\"`\n   + `data.error_code = \"E_TIMEOUT\"` + 三条建议（`API-12-2`）。\n\n🔒 `granularity` 的取值约束由 `CreateTaskRequest`（`code/backend/schemas.py`）\n   在解析阶段强制 —— 传 `sku` 等值会走统一参数异常处理器返回 `40012`，\n   与 §5.6 错误码表一致。**刻意不在本函数里再判一次**：那会让\n   「同一约束两处实现、两处可各自漂移」，正是本项目要避免的形态。\n\n⚠️ 推理是 CPU/GPU 密集的**阻塞**调用（数十秒），必须放线程池：\n   直接在 `async def` 里同步调用会占住事件循环，期间连 `/health`\n   都无法响应 —— 表现为「任务在跑，但整个服务像挂了」。",
+        "description": "创建并**同步执行**预测任务（`FR-MOD-07` ~ `FR-MOD-13`）。\n\n🔒 耗时预算 ≤ 60 s（`NFR-PERF-01`），`EP-5` 本机实测约 20 s。\n   超预算**不**返回 502/504，而是 `code: 0` + `data.status = \"failed\"`\n   + `data.error_code = \"E_TIMEOUT\"` + 三条建议（`API-12-2`）。\n\n🔒 `granularity` 的取值约束由 `CreateTaskRequest`（`app/schemas/task.py`）\n   在解析阶段强制 —— 传 `sku` 等值会走统一参数异常处理器返回 `40012`，\n   与 §5.6 错误码表一致。**刻意不在本函数里再判一次**：那会让\n   「同一约束两处实现、两处可各自漂移」，正是本项目要避免的形态。\n\n⚠️ 推理是 CPU/GPU 密集的**阻塞**调用（数十秒），必须放线程池：\n   直接在 `async def` 里同步调用会占住事件循环，期间连 `/health`\n   都无法响应 —— 表现为「任务在跑，但整个服务像挂了」。",
         "operationId": "create_prediction_api_v1_predictions_post",
         "parameters": [
           {
@@ -690,6 +834,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -759,6 +919,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -861,6 +1037,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1010,6 +1202,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -1042,7 +1250,7 @@
           "predictions"
         ],
         "summary": "导出预测结果（CSV / Excel）",
-        "description": "导出 CSV / xlsx（`FR-VIS-05` / `UX-P08-08`）。\n\n🔒 **导出要求登录**（`CurrentUser`，与 `API-14`/`API-15` 不同）：\n   `FR-USR-08` 允许游客**看**结果，但数据导出是把数据带走，必须鉴权。\n   这是同一份技术文档 §5 两处表述的唯一自洽解（见模块头注释）。\n\n🔒 **文件名双写**（`API-16-3`）：\n   `filename*=UTF-8''<percent-encoded>` 是 RFC 5987 标准写法，中文名在\n   各浏览器下都不会乱码；同时保留 ASCII 兜底 `filename=\"...\"`，\n   供不认识 `filename*` 的老客户端兜底（它会退化成 `task_42_export.csv`，\n   而不是拿到一个乱码名或直接 404）。",
+        "description": "导出 CSV / xlsx（`FR-VIS-05` / `UX-P08-08`）。\n\n🔒 **导出要求登录**（`CurrentUser`，与 `API-14`/`API-15` 不同）：\n   `FR-USR-08` 允许游客**看**结果，但数据导出是把数据带走，必须鉴权。\n   这是同一份技术文档 §5 两处表述的唯一自洽解（见模块头注释）。\n\n🔒 **文件名双写**（`API-16-3`）：\n   `filename*=UTF-8''<percent-encoded>` 是 RFC 5987 标准写法，中文名在\n   各浏览器下都不会乱码；同时保留 ASCII 兜底 `filename=\"...\"`，\n   供不认识 `filename*` 的老客户端兜底（它会退化成 `task_42_export.csv`，\n   而不是拿到一个乱码名或直接 404）。\n\n🔒 **流式返回**（2026-10-26 修复）：不再把整份内容读进内存再 `Response(content=)`，\n   而是交给 `StreamingResponse` 消费生成器 —— 上限 300 万行时内存恒定。\n   因此**不设 `Content-Length`**（长度在生成完毕前未知），由 chunked 传输，\n   `Content-Disposition` 依然足以触发浏览器下载。",
         "operationId": "prediction_export_api_v1_predictions__task_id__export_get",
         "parameters": [
           {
@@ -1081,6 +1289,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1138,6 +1362,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1299,6 +1539,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -1349,6 +1605,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -1358,6 +1630,101 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_WorkbenchSummary_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history/{task_id}/export": {
+      "get": {
+        "tags": [
+          "历史记录"
+        ],
+        "summary": "API-19a 历史记录导出（CSV / Excel）",
+        "description": "历史记录导出（`FR-HIS-03`）。\n\n🔒 **列定义与结果页完全一致**（`FR-HIS-03` 原文：「列定义同 `FR-VIS-05`」）。\n   故这里**直接复用** `result_service.prepare_export` —— 不另写一套列序，\n   否则「当时导出的」和「现在从历史导出的」两份文件列不一样，\n   用户拿去做对比时会以为数据变了。\n\n🔒 **要求登录**（`CurrentUser`）：与历史详情同理，历史里是别人的结果，\n   比结果页更敏感；且导出是把数据带走。\n\n⚠️ **只允许导出 `succeeded` 的任务**（`prepare_export` 内的 `_require_succeeded`）：\n   失败任务没有预测行，导出空文件不如明确报错。\n\n📌 与 `API-16` 共用 `_download.export_response()`：\n   文件名双写（RFC 5987）、不设 `Content-Length`、`no-store`\n   这三条细节只有一处实现，不会分叉。",
+        "operationId": "history_export_api_v1_history__task_id__export_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(csv|xlsx)$",
+              "description": "导出格式：csv（带 UTF-8 BOM）/ xlsx",
+              "default": "csv",
+              "title": "Format"
+            },
+            "description": "导出格式：csv（带 UTF-8 BOM）/ xlsx"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             }
@@ -1407,6 +1774,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1464,6 +1847,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1531,6 +1930,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1654,6 +2069,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -1713,6 +2144,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1783,6 +2230,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -1916,6 +2379,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -1976,6 +2455,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
+            }
           }
         ],
         "responses": {
@@ -2025,6 +2520,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -2086,6 +2597,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],
@@ -2249,6 +2776,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-auth-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Token"
             }
           }
         ],

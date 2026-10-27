@@ -151,7 +151,7 @@ app/
 ├── api/v1/    路由层（auth / datasets / predictions / history / admin）
 ├── services/  业务服务层（8 个：auth / dataset / predict / result / history / admin / cost_model / maintenance）
 ├── dao/       数据访问层（8 个，按表划分）
-├── models/    ORM 实体（8 个，与 8 张表一一对应）
+├── models/    ORM 实体（9 个，与 9 张表一一对应）
 ├── schemas/   Pydantic 请求/响应模型
 ├── core/      配置 / DB / 错误 / 日志 / 中间件 / 模型单例 / 安全
 ├── algo/      算法层（9 模块，可独立于 Web 层运行）

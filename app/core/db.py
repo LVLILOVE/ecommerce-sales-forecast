@@ -69,7 +69,16 @@ def _set_sqlite_pragma(dbapi_conn, _record) -> None:
     cur = dbapi_conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL")        # NFR-REL-04：并发读写
     cur.execute("PRAGMA foreign_keys=ON")         # 🔒 SQLite 默认关闭外键！
-    cur.execute("PRAGMA busy_timeout=5000")       # 写锁等待 5 秒而非立即报错
+    cur.execute("PRAGMA busy_timeout=15000")      # 写锁等待 15 秒而非立即报错
+    # ⚠️ 为什么从 5 秒提到 15 秒（2026-10-27）：
+    #   `PRAGMA busy_timeout` 只对「一开始就要写」的事务生效。WAL 下同一时刻
+    #   只能有一个 writer，3 个预测任务并发结束时（`verify_ep9_api` 的 B-19
+    #   就是这么测的）后两个必须排队。单个任务要写 791 行 `predictions` +
+    #   `metrics` + 审计 + 埋点，最坏的排队量已经超过 5 秒。
+    #   ⏱️ 实测：5 秒时 B-19 报 `database is locked`；15 秒后 3/3 全部成功。
+    #   🔴 但**不要**靠调大超时掩盖问题 —— 真正让锁持有变长的是
+    #   「推理前 flush 了 INSERT 却不提交」，那条已在 `predict_service`
+    #   的 `EV-PRED-01` 处单独修掉（写完立刻 commit）。
     cur.execute("PRAGMA synchronous=NORMAL")      # WAL 下兼顾安全与性能
     cur.close()
 

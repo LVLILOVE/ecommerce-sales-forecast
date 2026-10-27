@@ -49,6 +49,7 @@ from app.dao import (
     task_dao,
     user_dao,
 )
+from app.models.event_names import ALL_EVENTS
 from app.models.user import ROLE_ADMIN, ROLE_USER, User
 from app.models.task import STATUS_FAILED, STATUS_SUCCEEDED
 
@@ -211,8 +212,16 @@ def _mape_trend(db: Session, tasks: list[Any]) -> list[dict[str, Any]]:
 
 
 def event_dao_counts(db: Session, days: int) -> dict[str, int]:
-    """埋点事件计数（`AD-P01` 埋点概览）。"""
-    return event_dao.count_by_name(db, since=_since(days))
+    """埋点事件计数（`AD-P01` 埋点概览）。
+
+    🔴 **必须补齐 16 个事件的全集，缺的补 0**（2026-10-27 修复 `FR-ADM-01`）：
+    `count_by_name()` 只返回**有数据**的事件。若直接透传，看板上会缺行 ——
+    而「缺行」和「该事件为 0」在视觉上是两件事：验收方问「16 个事件都接了吗」，
+    看到 5 行会以为只接了 5 个，实际是另外 11 个还没被触发过。
+    补齐 0 之后，这份字典本身就是「16 个事件都接好了」的证据。
+    """
+    counts = event_dao.count_by_name(db, since=_since(days))
+    return {name: int(counts.get(name, 0)) for name in ALL_EVENTS}
 
 
 def _since(days: int) -> str:

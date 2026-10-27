@@ -4,8 +4,8 @@
   "failed": 0,
   "ts_interfaces": 51,
   "py_models": 64,
-  "backend_routes": 32,
-  "frontend_calls": 32,
+  "backend_routes": 33,
+  "frontend_calls": 33,
   "error_codes": 26,
   "items": [
     {

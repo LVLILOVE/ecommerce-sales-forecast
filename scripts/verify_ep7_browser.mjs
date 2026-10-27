@@ -147,7 +147,12 @@ const DETAIL_PROBE = `(() => {
     dist: !!q('[data-testid="distribution-chart"]'),
     series: !!q('[data-testid="series-block"]'),
     seriesPicker: !!q('[data-testid="series-picker"]'),
-    seriesOptions: qa('[data-testid="series-picker"] option').length,
+    // 🔴 选择器已由原生 `<select>` 换成「搜索 + 多选」自研组件（`FR-VIS-09`）：
+    //    选项不再是 `<option>`（而是 `role="option"` 的按钮），且下拉默认**收起**
+    //    —— 本探针是同步 IIFE，点开后 React 要下一帧才渲染列表，数不到。
+    //    故判据改为「存在可搜索的 combobox 输入框」，选项数量与上限 50
+    //    由 `verify_ep7.py` 的静态断言兜（`SERIES_MULTI_LIMIT`）。
+    seriesOptions: qa('[data-testid="series-picker"] input[role="combobox"]').length,
 
     timing: !!q('[data-testid="timing-block"]'),
     timingRows: qa('[data-testid="timing-list"] li').length,

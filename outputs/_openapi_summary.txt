@@ -1,0 +1,57 @@
+==========================================================================
+电商销量预测系统 API —— OpenAPI 契约摘要
+==========================================================================
+标题        : 电商销量预测系统 API
+版本        : 1.0.0
+OpenAPI     : 3.1.0
+路径数(paths): 31
+操作数(ops)  : 33
+Schema 数    : 78
+
+按 HTTP 方法：
+  DELETE  2
+  GET     20
+  PATCH   3
+  POST    8
+
+按业务分组(tag)：
+  auth             3
+  datasets         7
+  predictions      5
+  system           1
+  users            2
+  历史记录             6
+  管理端              9
+
+路径清单：
+  GET              /api/v1/admin/logs
+  GET              /api/v1/admin/models
+  PATCH            /api/v1/admin/models/{version}
+  GET              /api/v1/admin/overview
+  GET              /api/v1/admin/tasks
+  DELETE           /api/v1/admin/tasks/{task_id}
+  GET              /api/v1/admin/users
+  PATCH            /api/v1/admin/users/{user_id}
+  POST             /api/v1/admin/users/{user_id}/reset-password
+  POST             /api/v1/auth/login
+  POST             /api/v1/auth/logout
+  POST             /api/v1/auth/register
+  POST             /api/v1/datasets
+  POST             /api/v1/datasets/gap
+  GET              /api/v1/datasets/sample
+  GET              /api/v1/datasets/template
+  GET              /api/v1/datasets/{dataset_id}
+  GET              /api/v1/datasets/{dataset_id}/errors
+  GET              /api/v1/datasets/{dataset_id}/preview
+  GET              /api/v1/history
+  POST             /api/v1/history/compare
+  GET              /api/v1/history/dashboard
+  DELETE,GET       /api/v1/history/{task_id}
+  GET              /api/v1/history/{task_id}/export
+  POST             /api/v1/predictions
+  GET              /api/v1/predictions/{task_id}
+  GET              /api/v1/predictions/{task_id}/detail
+  GET              /api/v1/predictions/{task_id}/export
+  GET              /api/v1/predictions/{task_id}/status
+  GET,PATCH        /api/v1/users/me
+  GET              /health

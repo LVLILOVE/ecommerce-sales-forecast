@@ -23,12 +23,15 @@ import { Link, useParams } from 'react-router-dom';
 import { ApiError, historyApi, predictApi } from '../api/client';
 import CoveragePanel from '../components/result/CoveragePanel';
 import DistributionChart from '../components/result/DistributionChart';
+import ExportButtons from '../components/result/ExportButtons';
+import SeriesMultiSelect from '../components/result/SeriesMultiSelect';
 import LineCompare from '../components/result/LineCompare';
 import { BaselineTable, MetricCards, VerdictBar } from '../components/result/MetricPanels';
 import EmptyState from '../components/EmptyState';
 import NoticeBar from '../components/NoticeBar';
 import { Skeleton } from '../components/Skeleton';
 import type { PredictionResultResponse, SeriesCurve } from '../types';
+import { useAuthStore } from '../store/useAuthStore';
 
 type Phase = 'loading' | 'ready' | 'error';
 
@@ -40,6 +43,11 @@ export default function HistoryDetailPage() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState('');
   const [activeKey, setActiveKey] = useState('');
+  /** 多选叠加（`FR-VIS-09`）—— 与结果页同一套交互 */
+  const [activeKeys, setActiveKeys] = useState<string[]>([]);
+  /** 导出相关提示（`FR-HIS-03`）：成功不提示，失败/需登录才弹 */
+  const [toast, setToast] = useState('');
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(id) || id <= 0) {
@@ -52,6 +60,7 @@ export default function HistoryDetailPage() {
       const d = await historyApi.detail(id);
       setData(d);
       setActiveKey(d.series[0]?.key ?? '');
+      setActiveKeys(d.series[0]?.key ? [d.series[0].key] : []);
       setPhase('ready');
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '加载任务详情失败，请稍后重试');
@@ -100,22 +109,50 @@ export default function HistoryDetailPage() {
 
   return (
     <div data-testid="history-detail">
-      <header className="mb-4">
-        <p className="text-[0.75rem]" style={{ color: 'var(--text-3)' }}>
-          历史任务 /{' '}
-          <Link to="/history" style={{ color: 'var(--text-3)' }}>
-            列表
-          </Link>{' '}
-          / #{data.task.id}
-        </p>
-        <h1 className="mt-1 text-[1.5rem] font-semibold" style={{ color: 'var(--text)' }}>
-          {data.task.task_name ?? `任务 #${data.task.id}`}
-        </h1>
-        <p className="mt-1 text-[0.8125rem]" style={{ color: 'var(--text-2)' }}>
-          {data.dataset.file_name} · {data.task.horizon} 天步长 · 提交于{' '}
-          {data.task.created_at}
-        </p>
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[0.75rem]" style={{ color: 'var(--text-3)' }}>
+            历史任务 /{' '}
+            <Link to="/history" style={{ color: 'var(--text-3)' }}>
+              列表
+            </Link>{' '}
+            / #{data.task.id}
+          </p>
+          <h1 className="mt-1 text-[1.5rem] font-semibold" style={{ color: 'var(--text)' }}>
+            {data.task.task_name ?? `任务 #${data.task.id}`}
+          </h1>
+          <p className="mt-1 text-[0.8125rem]" style={{ color: 'var(--text-2)' }}>
+            {data.dataset.file_name} · {data.task.horizon} 天步长 · 提交于{' '}
+            {data.task.created_at}
+          </p>
+        </div>
+
+        {/*
+          🔒 历史记录导出（`FR-HIS-03`，P0）。
+          - 列定义与结果页**完全一致**（PRD 原文），后端共用 `prepare_export`；
+          - **失败任务不给导出**：它没有预测行，导出空文件不如不给（与
+            `prepare_export` 的 `_require_succeeded` 同口径，前端先拦一道，
+            避免用户点了才看到 400xx）；
+          - 复用结果页的 `ExportButtons`，只把 `exporter` 换成 `historyApi.export`。
+        */}
+        {!failed && (
+          <ExportButtons
+            taskId={data.task.id}
+            detailTotal={data.detail_total}
+            isAuthenticated={isAuthenticated}
+            onNeedLogin={() => setToast('导出需要登录，请先登录后再试。')}
+            onError={setToast}
+            exporter={historyApi.export}
+            fallbackNamePrefix="历史预测结果"
+          />
+        )}
       </header>
+
+      {toast ? (
+        <div className="mb-3">
+          <NoticeBar variant="warning">{toast}</NoticeBar>
+        </div>
+      ) : null}
 
       {/* 🔒 参数快照卡 */}
       <Section
@@ -222,9 +259,17 @@ export default function HistoryDetailPage() {
                 series={data.series}
                 activeKey={activeKey}
                 onChange={setActiveKey}
+                value={activeKeys}
+                onValueChange={setActiveKeys}
+                onLimit={(limit) => setToast(`最多同时对比 ${limit} 条序列，已按前 ${limit} 条截断。`)}
               />
               <div className="mt-3">
-                <LineCompare series={data.series} activeKey={activeKey} height={280} />
+                <LineCompare
+                  series={data.series}
+                  activeKey={activeKey}
+                  activeKeys={activeKeys}
+                  height={280}
+                />
               </div>
             </Section>
           ) : null}
@@ -293,28 +338,36 @@ function SeriesPicker({
   series,
   activeKey,
   onChange,
+  value,
+  onValueChange,
+  onLimit,
 }: {
   series: SeriesCurve[];
   activeKey: string;
   onChange: (key: string) => void;
+  /** 多选叠加（`FR-VIS-09`）—— 与结果页保持同一套交互 */
+  value: string[];
+  onValueChange: (keys: string[]) => void;
+  onLimit: (limit: number) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-[0.8125rem]">
-      <span style={{ color: 'var(--text-2)' }}>选择序列</span>
-      <select
-        value={activeKey}
-        onChange={(e) => onChange(e.target.value)}
-        data-testid="series-picker"
-        className="h-8 rounded-[var(--radius-sm)] border px-2 text-[0.8125rem]"
-        style={{ borderColor: 'var(--border-field)', background: 'var(--surface)', color: 'var(--text)' }}
-      >
-        {series.map((s) => (
-          <option key={s.key} value={s.key}>
-            {s.key}（{s.granularity_level}）
-          </option>
-        ))}
-      </select>
-    </label>
+    // 📌 testid 保持 `series-picker`（不加 `-wrap` 后缀）：
+    //    `scripts/verify_ep7_browser.mjs` 用 `[data-testid="series-picker"]`
+    //    精确匹配，改名会让浏览器走查静默查不到元素。
+    <div className="flex flex-col gap-1" data-testid="series-picker">
+      <span className="text-[0.8125rem]" style={{ color: 'var(--text-2)' }}>
+        选择序列（可搜索多选）
+      </span>
+      <SeriesMultiSelect
+        series={series}
+        value={value}
+        onChange={(keys) => {
+          onValueChange(keys);
+          onChange(keys[keys.length - 1] ?? activeKey);
+        }}
+        onLimit={onLimit}
+      />
+    </div>
   );
 }
 

@@ -21,19 +21,23 @@ API v1 · 历史记录与对比          API-17 ~ API-20  （EP-7）
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from typing import Annotated
+
+from fastapi import APIRouter, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
+from app.api.v1._download import client_ip, export_response
 from app.core.deps import CurrentUser, DbSession
 from app.schemas import (
     ApiResponse,
     CompareRequest,
     CompareResponse,
+    ExportQuery,
     HistoryPage,
     PredictionResultResponse,
     WorkbenchSummary,
 )
-from app.services import history_service
+from app.services import history_service, result_service
 
 router = APIRouter(prefix="/history", tags=["历史记录"])
 
@@ -124,6 +128,55 @@ async def workbench(
 # =============================================================================
 # 以下为参数化路径，必须放在上面所有字面量路径之后
 # =============================================================================
+@router.get(
+    "/{task_id}/export",
+    summary="API-19a 历史记录导出（CSV / Excel）",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {
+                "text/csv": {"schema": {"type": "string", "format": "binary"}},
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                    "schema": {"type": "string", "format": "binary"}
+                },
+            }
+        }
+    },
+)
+async def history_export(
+    task_id: int,
+    q: Annotated[ExportQuery, Query()],
+    request: Request,
+    user: CurrentUser,
+    db: DbSession,
+) -> Response:
+    """历史记录导出（`FR-HIS-03`）。
+
+    🔒 **列定义与结果页完全一致**（`FR-HIS-03` 原文：「列定义同 `FR-VIS-05`」）。
+       故这里**直接复用** `result_service.prepare_export` —— 不另写一套列序，
+       否则「当时导出的」和「现在从历史导出的」两份文件列不一样，
+       用户拿去做对比时会以为数据变了。
+
+    🔒 **要求登录**（`CurrentUser`）：与历史详情同理，历史里是别人的结果，
+       比结果页更敏感；且导出是把数据带走。
+
+    ⚠️ **只允许导出 `succeeded` 的任务**（`prepare_export` 内的 `_require_succeeded`）：
+       失败任务没有预测行，导出空文件不如明确报错。
+
+    📌 与 `API-16` 共用 `_download.export_response()`：
+       文件名双写（RFC 5987）、不设 `Content-Length`、`no-store`
+       这三条细节只有一处实现，不会分叉。
+    """
+    spec = await run_in_threadpool(
+        result_service.prepare_export, db, task_id,
+        user_id=user.id, fmt=q.format, ip=client_ip(request),
+    )
+    # 访问日志据此带上 task_id / user_id（`C-11`）
+    request.state.task_id = task_id
+    request.state.user_id = user.id
+    return export_response(spec, task_id)
+
+
 @router.get(
     "/{task_id}",
     response_model=ApiResponse[PredictionResultResponse],

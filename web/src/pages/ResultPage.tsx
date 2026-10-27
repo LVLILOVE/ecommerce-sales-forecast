@@ -35,6 +35,7 @@ import ExportButtons from '../components/result/ExportButtons';
 import LineCompare from '../components/result/LineCompare';
 import { BaselineTable, MetricCards, VerdictBar } from '../components/result/MetricPanels';
 import ResultAside from '../components/result/ResultAside';
+import SeriesMultiSelect from '../components/result/SeriesMultiSelect';
 import { useAsideContent } from '../layouts/aside-slot';
 import { useAuthStore } from '../store/useAuthStore';
 import { ERR } from '../types';
@@ -48,6 +49,8 @@ export default function ResultPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  /** 多选叠加（`FR-VIS-09`）：与 `activeKey` 并存 —— 单选时两者同值 */
+  const [activeKeys, setActiveKeys] = useState<string[]>([]);
   const [toast, setToast] = useState<string | null>(null);
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -66,6 +69,7 @@ export default function ResultPage() {
         setData(d);
         // 默认选中第一条曲线；序列为空时保持 null（图表组件会显示空态）
         setActiveKey(d.series?.[0]?.key ?? null);
+        setActiveKeys(d.series?.[0]?.key ? [d.series[0].key] : []);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -251,25 +255,28 @@ export default function ResultPage() {
             <div className="mb-3">
               <label className="flex flex-col gap-1">
                 <span className="text-[0.75rem]" style={{ color: 'var(--text-2)' }}>
-                  选择序列（{series.length} 条）
+                  选择序列（共 {series.length} 条，可搜索多选）
                 </span>
-                <select
-                  value={activeKey ?? ''}
-                  onChange={(e) => setActiveKey(e.target.value || null)}
-                  className="rounded-[var(--radius-sm)] border px-2 py-1.5 text-[0.8125rem]"
-                  style={{ borderColor: 'var(--border-field)', background: 'var(--surface)', color: 'var(--text)' }}
-                  data-testid="series-select"
-                >
-                  {series.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.sku_id} · {s.warehouse_id}（{s.granularity_level}）
-                    </option>
-                  ))}
-                </select>
+                {/*
+                  🔒 `FR-VIS-09`：多 SKU / 多仓库曲线的**叠加**与筛选，
+                     要求「下拉多选 + 搜索」。原实现只有一个单选 `<select>`，
+                     与本条需求不符（技术文档 §6.5.2 还自称已实现 —— 属文档失真）。
+                */}
+                <SeriesMultiSelect
+                  series={series}
+                  value={activeKeys}
+                  onChange={(keys) => {
+                    setActiveKeys(keys);
+                    setActiveKey(keys[keys.length - 1] ?? null);
+                  }}
+                  onLimit={(limit) =>
+                    setToast(`最多同时对比 ${limit} 条序列，已按前 ${limit} 条截断。`)
+                  }
+                />
               </label>
             </div>
           )}
-          <LineCompare series={series} activeKey={activeKey} />
+          <LineCompare series={series} activeKey={activeKey} activeKeys={activeKeys} />
           {data.truncated && (
             <p className="mt-2 text-[0.75rem]" style={{ color: 'var(--text-3)' }} data-testid="series-truncated-note">
               共 {data.coverage.total} 条序列，接口默认内联前 50 条以控制响应体积；

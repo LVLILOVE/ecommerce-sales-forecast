@@ -357,6 +357,21 @@ export const historyApi = {
   remove: (taskId: number) => unwrap<null>(http.delete(`/history/${taskId}`)),
 
   /**
+   * 历史记录导出（`FR-HIS-03`，`API-19a`）。
+   *
+   * 🔒 **列定义与结果页导出完全一致**（PRD 原文：「列定义同 `FR-VIS-05`」），
+   *    后端也是同一个 `prepare_export` —— 所以这里只需要换 URL 前缀。
+   *    必须登录（与历史详情同理：历史里是别人的结果，比结果页更敏感）。
+   */
+  export: (taskId: number, format: 'csv' | 'xlsx' = 'csv'): Promise<Blob> =>
+    unwrapBlob(
+      http.get(`/history/${taskId}/export`, {
+        params: { format },
+        responseType: 'blob',
+      }),
+    ),
+
+  /**
    * `UX-P04` 工作台概览。
    *
    * 🔴 **不要在前端自行聚合**统计卡：工作台「最近任务」与历史列表首屏

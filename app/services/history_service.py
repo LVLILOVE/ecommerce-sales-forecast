@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import GUEST_USER_ID
 from app.core.errors import BizError, ErrorCode
-from app.dao import task_dao
+from app.dao import event_dao, task_dao
+from app.models.event_names import EV_HIS_01_HISTORY_VIEW, EV_HIS_02_HISTORY_COMPARE
 from app.services import result_service
 
 logger = logging.getLogger(__name__)
@@ -87,13 +88,21 @@ def list_history(
         date_to=date_to,
         status=status,
     )
-    return {
+    result = {
         "items": [_history_item(r) for r in rows],
         "page": page,
         "size": size,
         "total": total,
         "pages": (total + size - 1) // size if size else 0,
     }
+    # `EV-HIS-01`（`FR-ADM-01`）：历史列表访问 —— 「复购行为」的代理指标
+    #（用户回来看自己上次的预测 = 他还在用这个产品）。
+    event_dao.record_safe(
+        db, event_name=EV_HIS_01_HISTORY_VIEW, user_id=user_id,
+        properties={"user_id": user_id, "record_count": len(result["items"])},
+    )
+    db.commit()
+    return result
 
 
 def _history_item(row: dict[str, Any]) -> dict[str, Any]:
@@ -293,7 +302,7 @@ def compare(
     warnings = _compare_warnings(tasks, usable)
 
     payload_tasks = [_compare_task(db, t, sku_ids, warehouse_ids, warnings) for t in tasks]
-    return {
+    result = {
         "tasks": payload_tasks,
         "attribution": _attribution(usable, warnings),
         # 🔒 `API-18-3`：跨数据集对比允许，但结论参考性下降，
@@ -302,6 +311,13 @@ def compare(
         "overlap_dates": _overlap_dates(db, usable),
         "warnings": warnings,
     }
+    # `EV-HIS-02`（`FR-ADM-01`）：跨任务对比 —— 对比功能价值验证
+    event_dao.record_safe(
+        db, event_name=EV_HIS_02_HISTORY_COMPARE, user_id=user_id,
+        properties={"task_ids": ids},
+    )
+    db.commit()
+    return result
 
 
 def _validate_compare_ids(task_ids: list[int]) -> list[int]:

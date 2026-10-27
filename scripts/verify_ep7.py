@@ -179,6 +179,7 @@ router = read("web/src/router/index.tsx")
 hist_page = read("web/src/pages/HistoryPage.tsx")
 detail_page = read("web/src/pages/HistoryDetailPage.tsx")
 cmp_page = read("web/src/pages/ComparePage.tsx")
+multi_select = read("web/src/components/result/SeriesMultiSelect.tsx")
 dash = read("web/src/pages/DashboardPage.tsx")
 
 check("UX-P09 历史列表页", bool(hist_page), f"{len(hist_page)} 字符")
@@ -210,8 +211,9 @@ check("UX-P10-01 参数快照标注「提交时冻结」",
       "frozen-badge" in detail_page and "冻结" in detail_page)
 check("UX-P10-02 指标区复用结果页组件（保证同源）",
       "MetricCards" in detail_page and "CoveragePanel" in detail_page)
-check("UX-P10-03 曲线为抽样（下拉）",
-      "series-picker" in detail_page)
+check("UX-P10-03 曲线为抽样（可搜索多选，FR-VIS-09）",
+      "series-picker" in detail_page and "SeriesMultiSelect" in detail_page
+      and "SERIES_MULTI_LIMIT" in multi_select)
 check("UX-P10-04 阶段耗时逐项「实际」",
       "timing-list" in detail_page and "timing-total" in detail_page)
 check("UX-P10-05 失败详情含错误码与阶段",

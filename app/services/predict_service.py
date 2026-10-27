@@ -70,7 +70,14 @@ from app.algo import config as algo_config
 from app.core import config
 from app.core.errors import BizError, ErrorCode
 from app.core.model_holder import ModelHandle, assert_ready
-from app.dao import metric_dao, oplog_dao, prediction_dao, task_dao
+from app.dao import event_dao, metric_dao, oplog_dao, prediction_dao, task_dao
+from app.models.event_names import (
+    EV_PRED_01_SUBMIT,
+    EV_PRED_02_COMPLETE,
+    EV_PRED_03_FAIL,
+    EV_PRED_04_TIMEOUT,
+    EV_PRED_05_DEVICE_FALLBACK,
+)
 from app.models.operation_log import ACTION_PREDICT, RESULT_FAIL, RESULT_SUCCESS
 from app.models.task import STATUS_FAILED, STATUS_SUCCEEDED
 from app.services import dataset_service
@@ -380,6 +387,24 @@ def create_and_run(
 
     prog = _Progress(task_id=task.id, device=handle.device, series_count=series_count)
     _push_progress(prog)
+    # `EV-PRED-01`（`FR-ADM-01`）：提交预测任务 —— 需求规模。
+    event_dao.record_safe(
+        db, event_name=EV_PRED_01_SUBMIT, user_id=user_id, task_id=task.id,
+        properties={
+            "task_id": task.id,
+            "horizon": horizon,
+            "series_count": series_count,
+            "series_limit_hit": int(series_count >= settings.max_series),
+        },
+    )
+    # 🔴🔴 **必须立刻提交**（2026-10-27 踩到）：
+    #    上面这条 `record_safe` 会 `flush()` 出一条 INSERT，事务就此进入**写**状态。
+    #    若不在这里 commit，写锁会一直被持有到「推理结束后的最终提交」——
+    #    而推理要跑 5~9 秒。3 个并发任务时后两个必然等到
+    #    `PRAGMA busy_timeout` 超时，报 `sqlite3.OperationalError: database is locked`
+    #    （`verify_ep9_api` 的 B-19 并发用例就是这么红的）。
+    #    埋点与任务创建不需要原子性 —— 它是独立的事件流，单独提交即可。
+    db.commit()
     _log_line(prog, STAGE_VALIDATE, f"task {task.id} created · horizon={horizon} · "
                                     f"series={series_count} · model={handle.version}")
 
@@ -401,6 +426,8 @@ def create_and_run(
             "预测任务超预算 task_id=%s stage=%s elapsed_ms=%s",
             task.id, prog.stage, int((time.perf_counter() - t_all) * 1000),
         )
+        # `EV-PRED-04`（`FR-ADM-01`）：超时软失败 —— 1 分钟约束的真实压力数据
+        # （埋点写在 `_fail()` 里，见下方单一落点说明，这里不重复记）
         payload = _fail(
             db, task=task, prog=prog, error_code=E_TIMEOUT,
             error_msg=(
@@ -413,6 +440,8 @@ def create_and_run(
         )
     except Exception as exc:  # noqa: BLE001 - 兜底转软失败，绝不让原始 500 外泄
         logger.exception("预测任务执行失败 task_id=%s", task.id)
+        # `EV-PRED-03`（`FR-ADM-01`）：任务失败 —— 失败归因
+        # （埋点写在 `_fail()` 里，见下方单一落点说明，这里不重复记）
         payload = _fail(
             db, task=task, prog=prog, error_code=E_INFER_FAIL,
             error_msg=f"推理过程异常：{type(exc).__name__}",
@@ -541,9 +570,32 @@ def _execute(
                 f"mape={metrics.weighted_mape:.2f};rows={written};ms={duration_ms}"),
         ip=ip,
     )
+    # `EV-PRED-02`（`FR-ADM-01`，PRD 称其为**核心埋点**）：任务成功结束。
+    #   `l1/l2/l3_count` + `weighted_mape` 是「覆盖率与准确率」两条主线的原始数据，
+    #   有了它才能回答「L3 占比高的任务是不是更慢/更不准」。
+    event_dao.record_safe(
+        db, event_name=EV_PRED_02_COMPLETE, user_id=user_id, task_id=task.id,
+        properties={
+            "task_id": task.id,
+            "duration_ms": duration_ms,
+            "l1_count": cov["L1"],
+            "l2_count": cov["L2"],
+            "l3_count": cov["L3"],
+            "weighted_mape": _f(metrics.weighted_mape),
+        },
+    )
+    # `EV-PRED-05`（`FR-ADM-01`）：CUDA→CPU 回退 —— 显存问题的发生频次。
+    #   只在真的回退时记，正常 GPU 任务不产生该事件（否则「回退率」没法算）。
+    if int(prog.device_fallback or 0) == 1:
+        event_dao.record_safe(
+            db, event_name=EV_PRED_05_DEVICE_FALLBACK, user_id=user_id, task_id=task.id,
+            properties={
+                "task_id": task.id,
+                "reason": "cuda_oom",
+                "device": prog.device,
+            },
+        )
     db.commit()
-
-    prog.finished = True
     prog.l1_count, prog.l2_count, prog.l3_count = cov["L1"], cov["L2"], cov["L3"]
     prog.progress_pct = 100.0
     prog.elapsed_ms = duration_ms
@@ -727,6 +779,25 @@ def _fail(
         detail=f"dataset={task.dataset_id};code={error_code};"
                f"stage={completed_stage};ms={duration_ms}",
         ip=ip,
+    )
+    # 🔴 **埋点的单一落点**（`FR-ADM-01`）：`_fail()` 被三处调用
+    #    （`_execute` 的超预算兜底、`create_and_run` 的超时、`create_and_run` 的异常），
+    #    如果把 `EV-PRED-03`/`EV-PRED-04` 分散写在各调用点，必然漏记一处。
+    #    这里按 `error_code` 分派，三处自动覆盖。
+    event_dao.record_safe(
+        db,
+        event_name=(
+            EV_PRED_04_TIMEOUT if error_code == E_TIMEOUT else EV_PRED_03_FAIL
+        ),
+        user_id=user_id,
+        task_id=task.id,
+        properties={
+            "task_id": task.id,
+            "error_code": error_code,
+            "duration_ms": duration_ms,
+            "completed_stage": completed_stage,
+            "series_count": prog.series_count,
+        },
     )
     db.commit()
 

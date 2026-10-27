@@ -27,6 +27,17 @@ type Props = {
   isAuthenticated: boolean;
   onNeedLogin: () => void;
   onError: (msg: string) => void;
+  /**
+   * 导出函数（`FR-HIS-03`）。
+   *
+   * 📌 默认走结果页的 `predictApi.export`（`API-16`）；
+   *    历史详情页传 `historyApi.export`（`API-19a`）—— 两条路由
+   *    **列定义完全相同**（`FR-HIS-03`：「列定义同 `FR-VIS-05`」），
+   *    只差 URL 前缀与归属校验，所以按钮组本身可以完全复用。
+   */
+  exporter?: (taskId: number, format: 'csv' | 'xlsx') => Promise<Blob>;
+  /** 下载文件名的兜底（服务端 `Content-Disposition` 读不到时用） */
+  fallbackNamePrefix?: string;
 };
 
 function parseFilename(headers: unknown, fallback: string): string {
@@ -53,6 +64,8 @@ export default function ExportButtons({
   isAuthenticated,
   onNeedLogin,
   onError,
+  exporter = predictApi.export,
+  fallbackNamePrefix = '预测结果',
 }: Props) {
   const [busy, setBusy] = useState<'csv' | 'xlsx' | null>(null);
 
@@ -63,11 +76,11 @@ export default function ExportButtons({
     }
     setBusy(fmt);
     try {
-      const res = await predictApi.export(taskId, fmt);
+      const res = await exporter(taskId, fmt);
       const blob = res instanceof Blob ? res : new Blob([res]);
       const name = parseFilename(
         (res as unknown as { headers?: unknown }).headers,
-        `预测结果_${taskId}.${fmt}`,
+        `${fallbackNamePrefix}_${taskId}.${fmt}`,
       );
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

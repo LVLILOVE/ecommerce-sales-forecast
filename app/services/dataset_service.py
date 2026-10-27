@@ -77,8 +77,13 @@ from app.core import config as app_config
 from app.core import csv_safety
 from app.core.db import EXPORT_TMP_DIR, UPLOAD_DIR
 from app.core.errors import BizError, ErrorCode
-from app.dao import dataset_dao, oplog_dao
+from app.dao import dataset_dao, event_dao, oplog_dao
 from app.models.dataset import STATUS_ACTIVE, STATUS_INVALID, Dataset
+from app.models.event_names import (
+    EV_DAT_01_UPLOAD,
+    EV_DAT_02_VALIDATE_FAIL,
+    EV_DAT_03_SAMPLE_LOAD,
+)
 from app.models.operation_log import ACTION_UPLOAD, RESULT_FAIL, RESULT_SUCCESS
 from app.models.user import GUEST_USER_ID
 from app.services import cost_model
@@ -324,6 +329,22 @@ def register_upload(
             ),
             ip=ip,
         )
+        # `EV-DAT-02`（`FR-ADM-01`，PRD 称其为**最高价值埋点**）：
+        # 用来识别用户最常犯的错，反推模板与提示文案的优化方向。
+        # ⚠️ 必须写在下面的 `db.commit()` **之前** —— 该 commit 是失败路径
+        #    唯一的落定点（随后的 BizError 会让 `get_db` 走 rollback）。
+        event_dao.record_safe(
+            db,
+            event_name=EV_DAT_02_VALIDATE_FAIL,
+            user_id=user_id,
+            task_id=None,
+            properties={
+                "fail_stage": issue.fail_stage,
+                "fail_reason": issue.code,
+                "column": (issue.data or {}).get("column")
+                or (issue.data or {}).get("missing_columns"),
+            },
+        )
         data = dict(issue.data)
         data["dataset_id"] = dataset.id
         # 🔒 必须显式提交后再抛（`BE-17` 的事务边界说明）：
@@ -412,6 +433,20 @@ def register_upload(
             f"series={dataset.valid_series_count}"
         ),
         ip=ip,
+    )
+    # `EV-DAT-01`（`FR-ADM-01`）：上传完成 —— 用于看数据规模分布。
+    event_dao.record_safe(
+        db,
+        event_name=EV_DAT_01_UPLOAD,
+        user_id=user_id,
+        properties={
+            "dataset_id": dataset.id,
+            "file_size": int(dataset.file_size or 0),
+            "row_count": int(dataset.row_count or 0),
+            "sku_count": int(dataset.sku_count or 0),
+            "warehouse_count": int(dataset.warehouse_count or 0),
+            "series_count": int(dataset.valid_series_count or 0),
+        },
     )
     return build_upload_payload(dataset, inspection.preview, interpolated=False)
 
@@ -657,6 +692,11 @@ def load_sample(
             f"series={dataset.valid_series_count}"
         ),
         ip=ip,
+    )
+    # `EV-DAT-03`（`FR-ADM-01`）：加载示例数据 —— 衡量新手引导的转化。
+    event_dao.record_safe(
+        db, event_name=EV_DAT_03_SAMPLE_LOAD, user_id=user_id,
+        properties={"user_id": user_id},
     )
     return build_upload_payload(dataset, inspection.preview, interpolated=False)
 
